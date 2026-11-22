@@ -1074,7 +1074,7 @@ fn place(inner: &Inner, p: &gtk::DrawingArea) {
     let ch = content.frame().size.height;
     let origin_y = if content.isFlipped() { y } else { ch - y - h };
     let frame = NSRect::new(NSPoint::new(x, origin_y), NSSize::new(w, h));
-    let attached = unsafe { wk.superview() }.is_some_and(|s| &*s == &*content);
+    let attached = unsafe { wk.superview() }.is_some_and(|s| *s == *content);
     if !attached {
         wk.removeFromSuperview();
         content.addSubview(wk);
@@ -1114,10 +1114,13 @@ impl PermissionRequest {
 #[derive(Clone)]
 pub struct Download(Rc<DownloadInner>);
 
+/// Picks the save path from the server's suggested file name.
+type DestinationFn = Box<dyn Fn(&str) -> PathBuf>;
+
 struct DownloadInner {
     wk: Retained<WKDownload>,
     view: RefCell<Weak<Inner>>,
-    destination_fn: RefCell<Option<Box<dyn Fn(&str) -> PathBuf>>>,
+    destination_fn: RefCell<Option<DestinationFn>>,
     destination: RefCell<Option<PathBuf>>,
     created: Slot<dyn Fn(&Path)>,
     progress: Slot<dyn Fn(f64, u64)>,

@@ -64,6 +64,8 @@ pub struct Response {
 
 /// What a site asks to use.
 #[derive(Clone, Debug, PartialEq, Eq)]
+// WKWebView only raises camera and microphone requests.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub enum Permission {
     /// Camera and/or microphone; neither means screen capture.
     Media {
