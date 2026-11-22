@@ -960,14 +960,14 @@ fn general(ctx: &Ctx) -> gtk::Widget {
     dropdown_row(
         &group,
         "Search engine",
-        Some("Used when you type words in the address bar"),
+        Some("Used when you type words in the address bar, and for suggestions as you type"),
         &names,
         current,
         move |i| {
             if let Some(c) = custom_weak.upgrade() {
                 c.set_visible(i == config::SEARCH_ENGINES.len());
             }
-            if let Some((_, url)) = config::SEARCH_ENGINES.get(i) {
+            if let Some((_, url, _)) = config::SEARCH_ENGINES.get(i) {
                 app.update(|c| c.search_url = url.to_string());
             }
         },

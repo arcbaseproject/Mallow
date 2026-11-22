@@ -16,14 +16,19 @@ pub fn cache_dir() -> PathBuf {
 pub const SETTINGS_URI: &str = "mallow://settings";
 pub const HISTORY_URI: &str = "mallow://history";
 
-/// (name, template) presets offered in Settings.
-pub const SEARCH_ENGINES: &[(&str, &str)] = &[
-    ("DuckDuckGo", "https://duckduckgo.com/?q={}"),
-    ("Google", "https://www.google.com/search?q={}"),
-    ("Bing", "https://www.bing.com/search?q={}"),
-    ("Brave Search", "https://search.brave.com/search?q={}"),
-    ("Startpage", "https://www.startpage.com/do/search?q={}"),
-    ("Ecosia", "https://www.ecosia.org/search?q={}"),
+/// (name, template, suggestions template) presets offered in Settings.
+/// Suggestions answer in the OpenSearch JSON form: `["query", ["one", "two"]]`.
+pub const SEARCH_ENGINES: &[(&str, &str, &str)] = &[
+    ("DuckDuckGo", "https://duckduckgo.com/?q={}", "https://duckduckgo.com/ac/?q={}&type=list"),
+    (
+        "Google",
+        "https://www.google.com/search?q={}",
+        "https://suggestqueries.google.com/complete/search?client=firefox&q={}",
+    ),
+    ("Bing", "https://www.bing.com/search?q={}", "https://api.bing.com/osjson.aspx?query={}"),
+    ("Brave Search", "https://search.brave.com/search?q={}", "https://search.brave.com/api/suggest?q={}"),
+    ("Startpage", "https://www.startpage.com/do/search?q={}", "https://www.startpage.com/osuggestions?q={}"),
+    ("Ecosia", "https://www.ecosia.org/search?q={}", "https://ac.ecosia.org/autocomplete?q={}&type=list"),
 ];
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]

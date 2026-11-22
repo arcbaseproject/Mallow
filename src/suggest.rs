@@ -1,14 +1,18 @@
-//! Address suggestions under a URL entry, from bookmarks and history.
-//! Local only: nothing typed leaves the machine.
+//! Address suggestions under a URL entry: the search engine's suggestions,
+//! then bookmarks and history. Typed searches go to the chosen preset engine;
+//! typed addresses and custom engines stay on the machine.
 
-use crate::app::App;
+use crate::{app::App, config, util};
 use gtk::{gdk, glib, prelude::*};
+use soup::prelude::*;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
 
 const LIMIT: usize = 8;
+/// At most this many of the rows are search-engine suggestions.
+const SEARCH_LIMIT: usize = 4;
 
 /// Show suggestions while `entry` is focused and has text. Picking one puts its
 /// URL in the entry and activates it, so the entry's own handler navigates.
@@ -84,12 +88,17 @@ pub fn attach(entry: &gtk::Entry, app: &Rc<App>) {
                 .collect()
         });
         let history = app.store().map(|s| s.suggest(&query, LIMIT as u32));
+        let searches = glib::spawn_future_local(search_suggestions(
+            app.config.borrow().search_url.clone(),
+            query.clone(),
+        ));
         let (e, urls) = (e.clone(), urls.clone());
         glib::spawn_future_local(async move {
             let visits = match history {
                 Some(rx) => rx.await.unwrap_or_default(),
                 None => Vec::new(),
             };
+            let searches = searches.await.unwrap_or_default();
             let Some(entry) = e.upgrade() else { return };
             // A newer keystroke has its own query in flight; a removed entry
             // (new-tab page replaced) has no window to show a popover in.
@@ -99,10 +108,13 @@ pub fn attach(entry: &gtk::Entry, app: &Rc<App>) {
             {
                 return;
             }
-            let mut rows: Vec<(String, String)> = marks;
-            for v in visits {
-                if !rows.iter().any(|(u, _)| *u == v.url) {
-                    rows.push((v.url, v.title));
+            // A search row's "URL" is its text: the entry turns it into a search.
+            let mut rows: Vec<(String, String)> =
+                searches.into_iter().take(SEARCH_LIMIT).map(|s| (s, String::new())).collect();
+            let n_search = rows.len();
+            for (url, title) in marks.into_iter().chain(visits.into_iter().map(|v| (v.url, v.title))) {
+                if !rows.iter().any(|(u, _)| *u == url) {
+                    rows.push((url, title));
                 }
             }
             rows.truncate(LIMIT);
@@ -111,8 +123,8 @@ pub fn attach(entry: &gtk::Entry, app: &Rc<App>) {
                 pop.popdown();
                 return;
             }
-            for (url, title) in &rows {
-                list.append(&suggestion_row(&app, url, title));
+            for (i, (url, title)) in rows.iter().enumerate() {
+                list.append(&suggestion_row(&app, url, title, i < n_search));
             }
             urls.replace(rows.into_iter().map(|(u, _)| u).collect());
             if pop.parent().is_none() {
@@ -200,7 +212,40 @@ pub fn attach(entry: &gtk::Entry, app: &Rc<App>) {
     });
 }
 
-fn suggestion_row(app: &Rc<App>, url: &str, title: &str) -> gtk::ListBoxRow {
+/// The preset engine's suggestions for `query`. None for a custom engine, or
+/// when `query` is an address rather than a search, so neither is sent anywhere.
+async fn search_suggestions(search_url: String, query: String) -> Vec<String> {
+    let Some((_, _, template)) = config::SEARCH_ENGINES.iter().find(|e| e.1 == search_url) else {
+        return Vec::new();
+    };
+    // With an empty template a search resolves to "", and an address never does.
+    if util::resolve_input(&query, "").as_deref() != Some("") {
+        return Vec::new();
+    }
+    let Ok(msg) = soup::Message::new("GET", &template.replace("{}", &util::encode_query(&query))) else {
+        return Vec::new();
+    };
+    let session = soup::Session::new();
+    session.set_user_agent(concat!("Mallow/", env!("CARGO_PKG_VERSION")));
+    session.set_timeout(5);
+    match session.send_and_read_future(&msg, glib::Priority::DEFAULT).await {
+        Ok(body) if msg.status() == soup::Status::Ok => parse_suggestions(&body),
+        _ => Vec::new(),
+    }
+}
+
+/// OpenSearch suggestions JSON: `["query", ["one", "two"], ...]`.
+fn parse_suggestions(body: &[u8]) -> Vec<String> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            let list = v.get(1)?.as_array()?;
+            Some(list.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        })
+        .unwrap_or_default()
+}
+
+fn suggestion_row(app: &Rc<App>, url: &str, title: &str, search: bool) -> gtk::ListBoxRow {
     let b = gtk::Box::new(gtk::Orientation::Vertical, 2);
     b.set_hexpand(true);
     let label = |text: &str, class: &str| {
@@ -208,6 +253,8 @@ fn suggestion_row(app: &Rc<App>, url: &str, title: &str) -> gtk::ListBoxRow {
             .label(text)
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
+            // Natural width would be the whole URL; the list's size request sets the real width.
+            .max_width_chars(1)
             .build();
         l.add_css_class(class);
         l
@@ -219,19 +266,35 @@ fn suggestion_row(app: &Rc<App>, url: &str, title: &str) -> gtk::ListBoxRow {
     if !title.is_empty() {
         b.append(&label(url, "suggest-url"));
     }
-    let icon = gtk::Image::from_icon_name("m-public-symbolic");
+    let icon = gtk::Image::from_icon_name(if search { "m-search-symbolic" } else { "m-public-symbolic" });
     icon.add_css_class("suggest-icon");
-    let session = app.network_session(None);
-    let (weak, page) = (icon.downgrade(), url.to_string());
-    glib::spawn_future_local(async move {
-        if let (Some(texture), Some(icon)) = (session.favicon(&page).await, weak.upgrade()) {
-            icon.set_paintable(Some(&texture));
-        }
-    });
+    if !search {
+        let session = app.network_session(None);
+        let (weak, page) = (icon.downgrade(), url.to_string());
+        glib::spawn_future_local(async move {
+            if let (Some(texture), Some(icon)) = (session.favicon(&page).await, weak.upgrade()) {
+                icon.set_paintable(Some(&texture));
+            }
+        });
+    }
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     line.append(&icon);
     line.append(&b);
     let row = gtk::ListBoxRow::builder().child(&line).focusable(false).build();
-    row.update_property(&[gtk::accessible::Property::Label(url)]);
+    let label = if search { format!("Search for {url}") } else { url.to_string() };
+    row.update_property(&[gtk::accessible::Property::Label(&label)]);
     row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_suggestions;
+
+    #[test]
+    fn parses_opensearch_suggestions() {
+        let google = br#"["rust",["rustdesk","rust game"],[],{"google:suggesttype":[]}]"#;
+        assert_eq!(parse_suggestions(google), ["rustdesk", "rust game"]);
+        assert!(parse_suggestions(b"<html>").is_empty());
+        assert!(parse_suggestions(br#"{"q":"rust"}"#).is_empty());
+    }
 }

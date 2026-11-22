@@ -33,6 +33,9 @@ jobs:
       - name: Test
         run: cargo test --locked
       - name: Build
+        # libsodium's soname differs across distributions (.23 here, .26 on others): link it in.
+        env:
+          RUSTFLAGS: -l static=sodium
         run: cargo build --release --locked
       - name: Tarball
         run: |
