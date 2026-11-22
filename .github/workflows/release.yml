@@ -41,6 +41,10 @@ jobs:
       - name: Tarball
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          # install.sh finds packages by the tag's version: they must match.
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2; exit 1
+          fi
           dir="mallow-$version-linux-x86_64"
           mkdir -p "$dir/bin" "$dir/share/applications" "$dir/share/icons/hicolor/scalable/apps"
           install -m755 target/release/mallow "$dir/bin/"
