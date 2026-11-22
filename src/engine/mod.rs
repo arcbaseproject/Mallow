@@ -1,6 +1,6 @@
 //! The browser engine boundary. Everything outside this module talks to web
 //! content only through these types; each operating system gets a backend that
-//! implements them on its native engine. Linux: WebKitGTK.
+//! implements them on its native engine. Linux: WebKitGTK; macOS: WKWebView.
 //!
 //! Backends provide `Engine`, `Session`, `View`, `WeakView`, `Download`,
 //! `PermissionRequest`, `SessionState`, `Handler` and `version()` with the
@@ -11,8 +11,13 @@ mod webkitgtk;
 #[cfg(target_os = "linux")]
 pub use webkitgtk::*;
 
-#[cfg(not(target_os = "linux"))]
-compile_error!("Mallow has an engine backend for Linux (WebKitGTK) only so far.");
+#[cfg(target_os = "macos")]
+mod wkwebview;
+#[cfg(target_os = "macos")]
+pub use wkwebview::*;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("Mallow has engine backends for Linux (WebKitGTK) and macOS (WKWebView) only so far.");
 
 /// Stages of a main-frame navigation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

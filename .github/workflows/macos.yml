@@ -1,0 +1,54 @@
+# macOS port checks (WKWebView backend). Builds with Homebrew GTK, runs the
+# unit tests and the engine script test, then launches Mallow on a local page
+# and saves screenshots as an artifact, since nobody on the team has a Mac.
+name: macOS
+
+on:
+  push:
+    branches: ["macos-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install GTK and libraries
+        run: brew install gtk4 libsoup libsodium pkgconf
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --locked
+      - name: Engine script test (WKWebView)
+        run: cargo test --locked synthetic_forms_in_webkit -- --ignored --test-threads=1
+      - name: Build
+        run: cargo build --locked
+      - name: Smoke test with screenshots
+        run: |
+          mkdir -p shots site profile/config profile/data profile/cache
+          cat > site/index.html <<'HTML'
+          <!doctype html><title>Mallow smoke test</title>
+          <h1 style="font:48px sans-serif">Hello from WKWebView</h1>
+          <p id="ua"></p><script>ua.textContent = navigator.userAgent</script>
+          <form method="post"><input autocomplete="username"><input type="password" autocomplete="current-password"></form>
+          HTML
+          (cd site && python3 -m http.server 8765 >/dev/null 2>&1 &)
+          export XDG_CONFIG_HOME=$PWD/profile/config XDG_DATA_HOME=$PWD/profile/data XDG_CACHE_HOME=$PWD/profile/cache
+          ./target/debug/mallow http://127.0.0.1:8765/ > mallow.log 2>&1 &
+          sleep 15; screencapture -x shots/1-page.png
+          sleep 10; screencapture -x shots/2-later.png
+          pkill mallow || true
+          cat mallow.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-smoke
+          path: |
+            shots/
+            mallow.log
