@@ -1,9 +1,14 @@
 mod app;
 mod config;
 mod downloads;
+mod history;
 mod lists;
+mod passwords;
+mod settings;
 mod store;
+mod suggest;
 mod theme;
+mod update;
 mod util;
 mod view;
 mod window;

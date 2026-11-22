@@ -28,6 +28,9 @@ pub fn resolve_input(input: &str, search_template: &str) -> Option<String> {
         if s == "about" {
             return Some(text.to_string());
         }
+        if s == "mallow" {
+            return Some(text.to_ascii_lowercase());
+        }
     }
     if text.starts_with('/') {
         return gtk::glib::filename_to_uri(text, None).ok().map(String::from);
@@ -206,6 +209,10 @@ mod tests {
         assert_eq!(resolve_input("/tmp/a#b?c", S).unwrap(), "file:///tmp/a%23b%3Fc");
         assert_eq!(resolve_input("/etc/hosts", S).unwrap(), "file:///etc/hosts");
         assert_eq!(resolve_input("about:blank", S).unwrap(), "about:blank");
+        assert_eq!(
+            resolve_input("Mallow://Settings", S).unwrap(),
+            "mallow://settings"
+        );
         assert_eq!(
             resolve_input("javascript:alert(1)", S).unwrap(),
             "https://search.example/?q=javascript%3Aalert%281%29"

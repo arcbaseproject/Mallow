@@ -8,14 +8,28 @@
 
 Mallow gives you tabs, bookmarks, private windows and tracker blocking in a 1 MB binary. It renders pages with the WebKitGTK engine your distribution already ships and updates, so you get engine security fixes from your package manager.
 
-It sends nothing home: no telemetry, no accounts, no sync, no background services.
+It sends nothing home: no telemetry, no accounts, no sync, no background services. The only request Mallow makes on its own is the start-up update check, and you can turn it off.
 
 ## Install
+
+Mallow runs on Linux. It needs GTK 4.20 or later and WebKitGTK 6.0 2.50 or later. It has no macOS or Windows builds, because WebKitGTK only supports Linux and BSD.
+
+### Packages
+
+Each [GitHub release](https://github.com/arcbaseproject/Mallow/releases) has builds for x86_64:
+
+- **Debian and Ubuntu:** the `.deb`, built on Ubuntu 26.04. Install it with `sudo apt install ./mallow_*.deb`.
+- **Fedora:** the `.rpm`, built on current Fedora. Install it with `sudo dnf install ./mallow-*.rpm`.
+- **Other distributions:** the `mallow-*-linux-x86_64.tar.gz` tarball. Install GTK 4 and WebKitGTK 6.0 from your distribution first. Then unpack the tarball and copy its `bin` and `share` folders into `~/.local` or `/usr/local`.
+
+`SHA256SUMS` lists the checksums of all three files. The packages are not signed.
+
+### From source
 
 You need Rust, GTK 4 and WebKitGTK 6.0. On Void Linux:
 
 ```sh
-sudo xbps-install -S rust cargo pkg-config gtk4-devel libwebkitgtk60-devel sqlite-devel
+sudo xbps-install -S rust cargo pkg-config gtk4-devel libwebkitgtk60-devel sqlite-devel libsodium-devel
 ```
 
 For audio and video, add `gst-plugins-good1 gst-plugins-bad1 gst-libav`.
@@ -40,7 +54,8 @@ Mallow runs on X11 and Wayland. It works on window managers like dwm, i3, sway a
 - **Private windows** with their own in-memory session and their own downloads list. Closing the window discards everything.
 - **Tracker blocking** through WebKit's built-in content blocker.
 - **Permission prompts** for camera, microphone, location, notifications and similar requests. Mallow asks you on each request. For a site that wants cookies while embedded in another site, Mallow remembers your answer for that pair of sites until you close the window, and the lock panel lists it.
-- **Find in page, zoom, history, downloads** with progress, and light, dark or system themes with six accent colours.
+- **A history page** at `mallow://history` (Ctrl+H): visits grouped by day, search, remove single entries or clear everything.
+- **Find in page, zoom, downloads** with progress, and light, dark or system themes with six accent colours.
 
 ### Keyboard shortcuts
 
@@ -58,24 +73,26 @@ Mallow runs on X11 and Wayland. It works on window managers like dwm, i3, sway a
 | Ctrl+Plus, Ctrl+Minus, Ctrl+0 | Zoom in, out, reset |
 | Ctrl+H, Ctrl+Shift+O, Ctrl+Shift+Y | History, bookmarks, downloads |
 | Ctrl+N, Ctrl+Shift+P | New window, new private window |
+| Ctrl+, | Settings |
 | Ctrl+Q | Quit |
 
-## Configuration
+## Settings
 
-Mallow reads `~/.config/mallow/config.toml`. You can leave out any key.
+Open Settings from the menu, with Ctrl+, or by typing `mallow://settings` in the address bar. It has seven sections:
 
-```toml
-homepage = ""                              # "" shows the new-tab page
-search_url = "https://duckduckgo.com/?q={}"
-theme = "system"                           # system, light or dark
-accent = "#6750A4"                         # any #rrggbb colour
-animations = true
-restore_session = true
-block_trackers = true
-cookies = "no-third-party"                 # no-third-party, always or never
-```
+| Section | What you can change |
+|---|---|
+| Appearance | Light, dark or system theme, accent colour (six presets or any colour), compact mode, hiding the tab bar with one tab, animations |
+| General | Startup (new tab, homepage, or last session), homepage, what new tabs open, search engine or a custom search address, asking before closing several tabs |
+| Privacy & security | Clearing history, cookies, cache or everything, tracker blocking, Intelligent Tracking Prevention, cookie policy, blocking camera, microphone, location or notifications outright |
+| Performance | Unloading inactive tabs after a set time, instant back and forward, low memory mode, autoplay, hardware acceleration, smooth scrolling, WebGL, plus version and tab diagnostics |
+| Downloads | Download folder, opening it, clearing finished downloads |
+| Languages & websites | Languages websites should use, spellchecking and dictionaries, default zoom |
+| About | Version, engine versions, update check on start (on or off), a Check now button, license and source link |
 
-You can also change the theme and accent from the menu.
+Changes apply at once and save to `~/.config/mallow/config.toml`. You can edit that file by hand too; Mallow checks every value when it starts. If the file has a syntax error, Mallow moves it to `config.toml.invalid`, starts with defaults and tells you on the Settings page. Mallow never overwrites a file it couldn't read.
+
+Web pages can't open `mallow://settings`. Mallow ignores the link, the redirect or the pop-up.
 
 To use your own tracker list, put one domain per line in `~/.config/mallow/blocklist.txt`. It replaces the bundled list in `assets/blocklist.txt`.
 
@@ -100,17 +117,20 @@ The window maps 90 to 145 ms after launch with a warm disk cache. Left idle with
 
 WebKit gives each tab its own web process. That process isolation costs memory, and Mallow keeps it.
 
+## Updates
+
+When a newer release appears on GitHub, Mallow shows a toast in the bottom-left corner. Update opens the release page. Mallow never downloads or runs anything itself, because release builds aren't signed. To update a source checkout, run `git pull` and then `./run.sh`.
+
 ## Privacy
 
-Mallow contacts the sites you visit and the search engine you configure (DuckDuckGo by default). It makes no other requests.
+Mallow contacts the sites you visit and the search engine you configure (DuckDuckGo by default). When it starts, it also asks GitHub's API for the latest Mallow release, sending only its version in the User-Agent. Turn that off in Settings › About. It makes no other requests.
 
 A private window keeps no history or cookies once you close it. Sites, your network provider and your employer can still see your traffic.
 
 ## Known limitations
 
-- Mallow has no settings window. You set most options in `config.toml`.
+- Settings has no HTTPS-only mode, "ask where to save" downloads or default-browser setup yet.
 - It has no password manager and no address-bar suggestions.
-- Loaded tabs stay loaded. Mallow can't suspend them yet.
 - Mallow asks for most permissions every time, and forgets embedded-cookie answers when you close the window.
 - The bundled tracker list holds about 40 domains, and pages that load in the first moment after startup may slip past it.
 - Quitting cancels running downloads without asking.
@@ -124,3 +144,5 @@ A private window keeps no history or cookies once you close it. Sites, your netw
 - [LICENSE](LICENSE): MIT
 
 The icons come from Google's [Material Symbols](https://github.com/google/material-design-icons) (Rounded) under the Apache 2.0 license.
+
+Passwords are managed in **Settings → Passwords**. See [Password storage and autofill](PASSWORDS.md) for the vault format, browser integration, and recovery limits.

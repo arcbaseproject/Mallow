@@ -39,6 +39,8 @@ Compare your version against the [WebKitGTK security advisories](https://webkitg
 
 **Permissions.** A site has to ask before it uses your camera, microphone, location, notifications, clipboard or similar features, and Mallow asks you on every request. WebKit doesn't tell Mallow which frame sent these requests, so Mallow won't reuse an answer that an embedded page could borrow. The one exception is a site asking for cookies while embedded in another site: WebKit names both sites, so Mallow remembers your answer for that pair until you close the window. The lock icon lists those answers and lets you reset them.
 
+**Updates.** Mallow only checks GitHub for a newer release and links to it. It never downloads or runs an update itself, so a compromised release page can't run code on your machine without you building it.
+
 **Passwords.** Mallow stores no passwords.
 
 **Private windows.** Each private window gets its own in-memory WebKit session. Mallow writes no history for it, and WebKit discards its cookies and site data when you close the window.

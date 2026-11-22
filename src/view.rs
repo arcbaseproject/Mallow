@@ -18,20 +18,32 @@ fn pair(w: &Rc<Window>, t: &Rc<Tab>) -> impl Fn() -> Option<(Rc<Window>, Rc<Tab>
 }
 
 pub fn create(win: &Rc<Window>, tab: &Rc<Tab>, related: Option<&WebView>) -> WebView {
+    let autoplay = match win.app.config.borrow().autoplay {
+        crate::config::Autoplay::Allow => webkit6::AutoplayPolicy::Allow,
+        crate::config::Autoplay::NoSound => webkit6::AutoplayPolicy::AllowWithoutSound,
+        crate::config::Autoplay::Deny => webkit6::AutoplayPolicy::Deny,
+    };
+    let policies = webkit6::WebsitePolicies::builder().autoplay(autoplay).build();
     let builder = WebView::builder()
+        .website_policies(&policies)
         .settings(&win.app.settings)
         .user_content_manager(&win.app.content);
     let view = match related {
         Some(r) => builder.related_view(r).build(),
         None => builder.network_session(win.session()).build(),
     };
+    crate::passwords::browser::attach(win, tab, &view);
     view.set_vexpand(true);
     view.set_hexpand(true);
+    view.set_zoom_level(win.app.config.borrow().default_zoom);
 
     let get = pair(win, tab);
     let g = get.clone();
     view.connect_title_notify(move |v| {
         let Some((w, t)) = g() else { return };
+        if t.view.borrow().as_ref() != Some(v) {
+            return; // detached (unloaded or parked) view
+        }
         t.set_title(v.title().as_deref().unwrap_or(""));
         if w.is_current(&t) {
             w.sync_ui();
@@ -39,7 +51,9 @@ pub fn create(win: &Rc<Window>, tab: &Rc<Tab>, related: Option<&WebView>) -> Web
     });
     let g = get.clone();
     view.connect_favicon_notify(move |v| {
-        if let Some((_, t)) = g() {
+        if let Some((_, t)) = g()
+            && t.view.borrow().as_ref() == Some(v)
+        {
             t.set_icon(v.favicon().as_ref());
         }
     });
@@ -77,6 +91,34 @@ pub fn create(win: &Rc<Window>, tab: &Rc<Tab>, related: Option<&WebView>) -> Web
                 store.visit(&uri, v.title().as_deref().unwrap_or(""));
             }
         }
+    });
+    // WebKit often learns the title after load-finished; fill it in then.
+    let g = get.clone();
+    view.connect_title_notify(move |v| {
+        let Some((w, _)) = g() else { return };
+        let (Some(uri), Some(title)) = (v.uri(), v.title()) else {
+            return;
+        };
+        if !w.private
+            && !title.is_empty()
+            && (uri.starts_with("https://") || uri.starts_with("http://"))
+            && let Some(store) = w.app.store()
+        {
+            store.title(&uri, &title);
+        }
+    });
+    let g = get.clone();
+    view.connect_load_failed(move |v, _, uri, err| {
+        // Cancelled loads (Stop, new navigation, downloads) keep WebKit's default: nothing.
+        if err.matches(webkit6::NetworkError::Cancelled)
+            || err.matches(webkit6::PolicyError::FrameLoadInterruptedByPolicyChange)
+        {
+            return false;
+        }
+        let Some((w, _)) = g() else { return false };
+        let accent = w.app.config.borrow().accent.clone();
+        v.load_alternate_html(&error_page(uri, err, &accent), uri, None);
+        true
     });
     let g = get.clone();
     view.connect_create(move |v, _action| {
@@ -162,8 +204,9 @@ fn decide_policy(w: &Rc<Window>, decision: &webkit6::PolicyDecision, kind: Polic
                 .unwrap_or_default();
             if !util::INTERNAL_SCHEMES.contains(&scheme.as_str()) {
                 decision.ignore();
-                // Only a click may launch another app, never a script or redirect.
-                if action.is_user_gesture() && !action.is_redirect() {
+                // Only a click may launch another app, never a script or
+                // redirect. `mallow:` is browser UI: pages can't open it.
+                if action.is_user_gesture() && !action.is_redirect() && scheme != "mallow" {
                     w.ask_external(&uri);
                 }
                 return true;
@@ -199,5 +242,78 @@ fn decide_policy(w: &Rc<Window>, decision: &webkit6::PolicyDecision, kind: Polic
             false
         }
         _ => false,
+    }
+}
+
+/// Friendly page for a failed load, themed with the browser's colour tokens.
+fn error_page(uri: &str, err: &gtk::glib::Error, accent: &str) -> String {
+    use gtk::gio::{IOErrorEnum as Io, ResolverError, TlsError};
+    let host = gtk::glib::Uri::parse(uri, gtk::glib::UriFlags::NONE)
+        .ok()
+        .and_then(|u| u.host())
+        .map_or_else(|| uri.to_string(), String::from);
+    let (title, hint, code) = if err.kind::<ResolverError>().is_some() {
+        (
+            "This site can't be found",
+            format!("Check the spelling of {host}, or your connection."),
+            "NAME_NOT_RESOLVED",
+        )
+    } else if err.kind::<TlsError>().is_some() {
+        (
+            "Connection not secure",
+            format!("{host} sent a certificate that can't be trusted."),
+            "CERT_INVALID",
+        )
+    } else {
+        match err.kind::<Io>() {
+            Some(Io::ConnectionRefused) => (
+                "Connection refused",
+                format!("{host} refused to connect."),
+                "CONNECTION_REFUSED",
+            ),
+            Some(Io::TimedOut) => (
+                "Connection timed out",
+                format!("{host} took too long to respond."),
+                "TIMED_OUT",
+            ),
+            Some(Io::NetworkUnreachable | Io::HostUnreachable) => (
+                "You're offline",
+                "Check your network connection.".into(),
+                "ADDRESS_UNREACHABLE",
+            ),
+            _ => (
+                "This page couldn't load",
+                format!("Something went wrong loading {host}."),
+                "LOAD_FAILED",
+            ),
+        }
+    };
+    let dark = gtk::Settings::default()
+        .is_some_and(|s| s.gtk_interface_color_scheme() == gtk::InterfaceColorScheme::Dark);
+    include_str!("../assets/error.html")
+        .replace("{{tokens}}", &crate::theme::css(accent, dark))
+        .replace("{{title}}", title)
+        .replace("{{hint}}", &escape(&hint))
+        .replace("{{message}}", &escape(err.message()))
+        .replace("{{code}}", &format!("{code} · {}", escape(uri)))
+        .replace("{{uri}}", &escape(uri))
+}
+
+/// Error text and URLs come from the network; never let them become markup.
+fn escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn escapes_markup() {
+        assert_eq!(
+            super::escape("<a href=\"x\">&"),
+            "&lt;a href=&quot;x&quot;&gt;&amp;"
+        );
     }
 }

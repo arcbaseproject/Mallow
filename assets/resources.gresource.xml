@@ -12,24 +12,33 @@
     <file preprocess="xml-stripblanks" alias="m-dark_mode-symbolic.svg">icons/m-dark_mode-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-download-symbolic.svg">icons/m-download-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-history-symbolic.svg">icons/m-history-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-home-symbolic.svg">icons/m-home-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-info-symbolic.svg">icons/m-info-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-keyboard_arrow_down-symbolic.svg">icons/m-keyboard_arrow_down-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-keyboard_arrow_up-symbolic.svg">icons/m-keyboard_arrow_up-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-language-symbolic.svg">icons/m-language-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-light_mode-symbolic.svg">icons/m-light_mode-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-location_on-symbolic.svg">icons/m-location_on-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-lock-symbolic.svg">icons/m-lock-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-mic-symbolic.svg">icons/m-mic-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-more_vert-symbolic.svg">icons/m-more_vert-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-notifications-symbolic.svg">icons/m-notifications-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-palette-symbolic.svg">icons/m-palette-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-public-symbolic.svg">icons/m-public-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-refresh-symbolic.svg">icons/m-refresh-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-search-symbolic.svg">icons/m-search-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-settings-symbolic.svg">icons/m-settings-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-shield-symbolic.svg">icons/m-shield-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-speed-symbolic.svg">icons/m-speed-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-star-filled-symbolic.svg">icons/m-star-filled-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-star-symbolic.svg">icons/m-star-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-tune-symbolic.svg">icons/m-tune-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-videocam-symbolic.svg">icons/m-videocam-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-visibility_off-symbolic.svg">icons/m-visibility_off-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="m-warning-symbolic.svg">icons/m-warning-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-logout-symbolic.svg">icons/m-logout-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-remove-symbolic.svg">icons/m-remove-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="m-web_asset-symbolic.svg">icons/m-web_asset-symbolic.svg</file>
   </gresource>
   <gresource prefix="/dev/mallow/icons/scalable/apps">
     <file alias="dev.mallow.Browser.svg">icons/dev.mallow.Browser.svg</file>

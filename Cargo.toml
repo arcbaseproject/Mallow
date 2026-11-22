@@ -2,13 +2,23 @@
 name = "mallow"
 version = "0.1.0"
 edition = "2024"
+description = "A small, fast Linux browser built on GTK 4 and WebKitGTK"
+license = "MIT"
+repository = "https://github.com/arcbaseproject/Mallow"
 
 [dependencies]
+chacha20poly1305 = "0.10"
+zeroize = "1.9"
+rand = "0.8"
+serde_json = "1"
+url = "2.5"
+
 futures-channel = "0.3"
 glib-unix = "0.22.8"
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_20"] }
 rusqlite = "0.43.0"
 serde = { version = "1.0.229", features = ["derive"] }
+soup3 = "0.9"
 toml = "1.2.2"
 webkit6 = { version = "0.6.1", features = ["v2_50"] }
 
@@ -20,3 +30,34 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Linux packages, built in CI by .github/workflows/release.yml on the target distros.
+[package.metadata.deb]
+maintainer = "arcbaseproject <arcbaseproject@users.noreply.github.com>"
+section = "web"
+priority = "optional"
+depends = "$auto"
+recommends = "gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav"
+extended-description = "Tabs, bookmarks, private windows, tracker blocking and an encrypted password manager, rendered by the system WebKitGTK."
+assets = [
+    ["target/release/mallow", "usr/bin/", "755"],
+    ["packaging/dev.mallow.Browser.desktop", "usr/share/applications/", "644"],
+    ["assets/icons/dev.mallow.Browser.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["README.md", "usr/share/doc/mallow/", "644"],
+    ["PASSWORDS.md", "usr/share/doc/mallow/", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/mallow", dest = "/usr/bin/mallow", mode = "755" },
+    { source = "packaging/dev.mallow.Browser.desktop", dest = "/usr/share/applications/dev.mallow.Browser.desktop", mode = "644" },
+    { source = "assets/icons/dev.mallow.Browser.svg", dest = "/usr/share/icons/hicolor/scalable/apps/dev.mallow.Browser.svg", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/mallow/LICENSE", mode = "644", doc = true },
+    { source = "README.md", dest = "/usr/share/doc/mallow/README.md", mode = "644", doc = true },
+    { source = "PASSWORDS.md", dest = "/usr/share/doc/mallow/PASSWORDS.md", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.recommends]
+gstreamer1-plugins-good = "*"
+gstreamer1-plugins-bad-free = "*"
+gstreamer1-plugin-libav = "*"

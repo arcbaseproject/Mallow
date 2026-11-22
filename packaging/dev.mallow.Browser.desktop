@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Mallow
+GenericName=Web Browser
+Comment=Browse the web with a small, fast browser
+Exec=mallow %U
+Icon=dev.mallow.Browser
+Terminal=false
+StartupNotify=true
+StartupWMClass=dev.mallow.Browser
+Categories=Network;WebBrowser;GTK;
+Keywords=web;browser;internet;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;

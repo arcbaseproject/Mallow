@@ -1,5 +1,5 @@
 use crate::{
-    config::{self, Config, Cookies, Session, Theme},
+    config::{self, Config, Cookies, Session, Startup, Theme},
     downloads::Downloads,
     store::Store,
     theme, util,
@@ -15,8 +15,15 @@ use webkit6::{NetworkSession, prelude::*};
 pub const APP_ID: &str = "dev.mallow.Browser";
 
 pub struct App {
+    pub passwords: crate::passwords::Manager,
     pub gtk: gtk::Application,
     pub config: RefCell<Config>,
+    /// Why the config file could not be used as-is, shown in Settings.
+    pub config_problem: RefCell<Option<String>>,
+    /// Set by Quit so closing windows skips the "close N tabs?" prompt.
+    pub quitting: std::cell::Cell<bool>,
+    /// The start-up update check runs once per process.
+    update_checked: std::cell::Cell<bool>,
     /// Shared by every view so the content filter is compiled once.
     pub content: webkit6::UserContentManager,
     pub settings: webkit6::Settings,
@@ -51,6 +58,7 @@ const ACCELS: &[(&str, &[&str])] = &[
     ("app.new-window", &["<Ctrl>n"]),
     ("app.new-private-window", &["<Ctrl><Shift>p", "<Ctrl><Shift>n"]),
     ("win.downloads", &["<Ctrl><Shift>y"]),
+    ("win.settings", &["<Ctrl>comma"]),
     ("app.quit", &["<Ctrl>q"]),
 ];
 
@@ -76,7 +84,8 @@ impl App {
                 "popover { background: var(--surface); } \
                  popover > contents { box-shadow: none; margin: 0; \
                  border: 1px solid var(--outline-variant); } \
-                 tooltip { box-shadow: none; border-radius: 0; }",
+                 tooltip { box-shadow: none; border-radius: 0; } \
+                 window.dialog.message, window.dialog.alert { border-radius: 0; }",
             );
             gtk::style_context_add_provider_for_display(
                 &display,
@@ -93,10 +102,22 @@ impl App {
 
         let settings = webkit6::Settings::new();
         settings.set_enable_developer_extras(true);
+        let (config, config_problem) = Config::load();
+        if let Some(s) = gtk::Settings::default() {
+            // GTK's automatic (unhinted) text rendering clips the tops of
+            // some glyphs ("T", "r") with the GL renderer at common sizes.
+            s.set_gtk_font_rendering(gtk::FontRendering::Manual);
+            s.set_gtk_xft_antialias(1);
+            s.set_gtk_xft_hintstyle(Some("hintslight"));
+        }
 
         let app = Rc::new(Self {
             gtk: gapp.clone(),
-            config: RefCell::new(Config::load()),
+            config: RefCell::new(config),
+            config_problem: RefCell::new(config_problem),
+            quitting: Default::default(),
+            passwords: Default::default(),
+            update_checked: Default::default(),
             content: webkit6::UserContentManager::new(),
             settings,
             downloads: Rc::default(),
@@ -106,6 +127,7 @@ impl App {
             tokens,
         });
         app.apply_theme();
+        app.apply_engine();
         if let Some(s) = gtk::Settings::default() {
             // Follow the desktop switching light/dark while running.
             let weak = Rc::downgrade(&app);
@@ -137,13 +159,15 @@ impl App {
         add("new-private-window", |a| Window::new(a, true).open_home());
         let weak = Rc::downgrade(self);
         self.gtk.connect_shutdown(move |_| {
-            if let Some(app) = weak.upgrade()
-                && let Some(Some(store)) = app.store.get()
-            {
-                store.shutdown();
+            if let Some(app) = weak.upgrade() {
+                app.passwords.lock();
+                if let Some(Some(store)) = app.store.get() {
+                    store.shutdown();
+                }
             }
         });
         add("quit", |a| {
+            a.quitting.set(true);
             let windows = a.windows.borrow().clone();
             for w in windows {
                 w.win.close();
@@ -171,7 +195,9 @@ impl App {
                     });
                 }
             }
-            if !cfg.animations {
+            if cfg.animations {
+                s.reset_property("gtk-enable-animations");
+            } else {
                 s.set_gtk_enable_animations(false);
             }
         }
@@ -193,6 +219,102 @@ impl App {
         }
         self.tokens
             .load_from_string(&theme::css(&self.config.borrow().accent, dark));
+    }
+
+    /// Change config, persist it, and re-apply what depends on it. Only
+    /// called from user actions, never per frame or per keystroke.
+    pub fn update(&self, f: impl FnOnce(&mut Config)) {
+        f(&mut self.config.borrow_mut());
+        self.config.borrow().save();
+    }
+
+    /// Engine-wide preferences on the shared WebKit objects.
+    pub fn apply_engine(&self) {
+        let cfg = self.config.borrow();
+        self.settings
+            .set_hardware_acceleration_policy(if cfg.hardware_acceleration {
+                webkit6::HardwareAccelerationPolicy::Always
+            } else {
+                webkit6::HardwareAccelerationPolicy::Never
+            });
+        self.settings.set_enable_smooth_scrolling(cfg.smooth_scrolling);
+        self.settings.set_enable_webgl(cfg.webgl);
+        self.settings.set_enable_page_cache(cfg.page_cache);
+        if let Some(ctx) = webkit6::WebContext::default() {
+            ctx.set_cache_model(if cfg.low_memory {
+                webkit6::CacheModel::DocumentViewer
+            } else {
+                webkit6::CacheModel::WebBrowser
+            });
+            let langs = config::parse_languages(&cfg.languages).unwrap_or_default();
+            if !langs.is_empty() {
+                ctx.set_preferred_languages(&langs.iter().map(String::as_str).collect::<Vec<_>>());
+            }
+            ctx.set_spell_checking_enabled(cfg.spellcheck);
+            let dicts = config::parse_dictionaries(&cfg.spell_languages).unwrap_or_default();
+            if cfg.spellcheck && !dicts.is_empty() {
+                ctx.set_spell_checking_languages(&dicts.iter().map(String::as_str).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    /// Cookie policy and tracking prevention on every live network session.
+    pub fn apply_network(&self) {
+        let sessions: Vec<NetworkSession> = self
+            .session
+            .get()
+            .cloned()
+            .into_iter()
+            .chain(self.windows.borrow().iter().filter_map(|w| w.live_session()))
+            .collect();
+        for s in sessions {
+            self.configure_policies(&s);
+        }
+    }
+
+    fn configure_policies(&self, s: &NetworkSession) {
+        let cfg = self.config.borrow();
+        s.set_itp_enabled(cfg.itp);
+        if let Some(cm) = s.cookie_manager() {
+            cm.set_accept_policy(match cfg.cookies {
+                Cookies::NoThirdParty => webkit6::CookieAcceptPolicy::NoThirdParty,
+                Cookies::Always => webkit6::CookieAcceptPolicy::Always,
+                Cookies::Never => webkit6::CookieAcceptPolicy::Never,
+            });
+        }
+    }
+
+    pub fn set_block_trackers(&self, on: bool) {
+        self.update(|c| c.block_trackers = on);
+        if on {
+            self.load_content_filter();
+        } else {
+            self.content.remove_all_filters();
+        }
+    }
+
+    /// Window-level preferences (compact mode, tab bar) in every window.
+    pub fn apply_windows(&self) {
+        let windows = self.windows.borrow().clone();
+        for w in windows {
+            w.apply_prefs();
+        }
+    }
+
+    pub fn apply_unloading(&self) {
+        let windows = self.windows.borrow().clone();
+        for w in windows {
+            w.apply_unloading();
+        }
+    }
+
+    pub fn tab_count(&self) -> usize {
+        self.windows.borrow().iter().map(|w| w.tab_count()).sum()
+    }
+
+    /// Tabs that currently hold a web view (not new-tab, settings or unloaded).
+    pub fn loaded_tab_count(&self) -> usize {
+        self.windows.borrow().iter().map(|w| w.loaded_count()).sum()
     }
 
     pub fn set_theme(&self, theme: Theme) {
@@ -265,14 +387,7 @@ impl App {
         if let Some(dm) = s.website_data_manager() {
             dm.set_favicons_enabled(true);
         }
-        s.set_itp_enabled(true);
-        if let Some(cm) = s.cookie_manager() {
-            cm.set_accept_policy(match self.config.borrow().cookies {
-                Cookies::NoThirdParty => webkit6::CookieAcceptPolicy::NoThirdParty,
-                Cookies::Always => webkit6::CookieAcceptPolicy::Always,
-                Cookies::Never => webkit6::CookieAcceptPolicy::Never,
-            });
-        }
+        self.configure_policies(&s);
         let weak = Rc::downgrade(self);
         let downloads = Rc::downgrade(downloads);
         s.connect_download_started(move |_, dl| {
@@ -284,7 +399,7 @@ impl App {
                 .web_view()
                 .and_then(|view| view.root())
                 .and_downcast::<gtk::Window>();
-            downloads.track(parent.as_ref(), dl);
+            downloads.track(parent.as_ref(), dl, app.config.borrow().download_dir());
             // A tab opened only to fetch a file has nothing to show; close it
             // once the transfer ends (closing earlier would cancel it).
             let Some(view) = dl.web_view() else { return };
@@ -322,12 +437,21 @@ impl App {
 
     /// Clears history plus cookies, cache and site storage of normal windows.
     pub fn clear_browsing_data(self: &Rc<Self>) {
-        if let Some(store) = self.store() {
+        self.clear_data(true, webkit6::WebsiteDataTypes::all());
+    }
+
+    /// Clear history (optionally) and the given WebKit data of normal windows.
+    pub fn clear_data(self: &Rc<Self>, history: bool, types: webkit6::WebsiteDataTypes) {
+        if history && let Some(store) = self.store() {
             store.clear_history();
         }
+        if types.is_empty() {
+            return;
+        }
         if let Some(dm) = self.network_session(None).website_data_manager() {
+            let all = types == webkit6::WebsiteDataTypes::all();
             dm.clear(
-                webkit6::WebsiteDataTypes::all(),
+                types,
                 glib::TimeSpan::from_seconds(0),
                 None::<&gio::Cancellable>,
                 |r| {
@@ -336,10 +460,58 @@ impl App {
                     }
                 },
             );
-            if let Some(fav) = dm.favicon_database() {
+            if all && let Some(fav) = dm.favicon_database() {
                 fav.clear();
             }
         }
+    }
+
+    /// Round site badge: the name's initial, replaced by the site's favicon
+    /// once WebKit's favicon database has one. `tone` picks the letter colour.
+    pub fn site_avatar(self: &Rc<Self>, url: &str, name: &str, tone: usize) -> gtk::Box {
+        let avatar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        // Children expand to centre inside the badge; the badge itself must not.
+        avatar.set_hexpand(false);
+        avatar.add_css_class("tile-avatar");
+        avatar.add_css_class(&format!("tone-{}", tone % 3));
+        let letter = gtk::Label::builder()
+            .label(util::initial(name).to_string())
+            .hexpand(true)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+        avatar.append(&letter);
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return avatar;
+        }
+        let Some(db) = self
+            .network_session(None)
+            .website_data_manager()
+            .and_then(|dm| dm.favicon_database())
+        else {
+            return avatar;
+        };
+        let (weak, url) = (avatar.downgrade(), url.to_string());
+        glib::spawn_future_local(async move {
+            // No icon recorded yet is the common case; keep the letter.
+            let Ok(texture) = db.favicon_future(&url).await else {
+                return;
+            };
+            let Some(avatar) = weak.upgrade() else { return };
+            let icon = gtk::Image::builder()
+                .paintable(&texture)
+                .hexpand(true)
+                .halign(gtk::Align::Center)
+                .valign(gtk::Align::Center)
+                .build();
+            avatar.remove(&letter);
+            avatar.append(&icon);
+            for tone in 0..3 {
+                avatar.remove_css_class(&format!("tone-{tone}"));
+            }
+            avatar.add_css_class("has-favicon");
+        });
+        avatar
     }
 
     fn close_view(&self, view: &webkit6::WebView) {
@@ -363,20 +535,53 @@ impl App {
         self.windows.borrow().iter().filter(|w| !w.private).count()
     }
 
-    pub fn activate(self: &Rc<Self>) {
-        let first = self.windows.borrow().is_empty();
-        let w = Window::new(self, false);
-        if first
-            && self.config.borrow().restore_session
-            && let Some(s) = Session::load().filter(|s| !s.tabs.is_empty())
-        {
-            w.restore(s);
+    /// Start-up check: tell the user, in the active window, about a newer
+    /// release. Failures stay silent; the About page reports them on demand.
+    fn startup_update_check(self: &Rc<Self>) {
+        if self.update_checked.replace(true) || !self.config.borrow().check_updates {
             return;
         }
-        w.open_home();
+        let weak = Rc::downgrade(self);
+        crate::update::check(move |outcome| {
+            let Some(app) = weak.upgrade() else { return };
+            if let crate::update::Outcome::Newer { version, url } = outcome {
+                let active = app.gtk.active_window();
+                let windows = app.windows.borrow().clone();
+                let target = windows
+                    .iter()
+                    .find(|w| Some(w.win.upcast_ref::<gtk::Window>()) == active.as_ref())
+                    .or(windows.first())
+                    .cloned();
+                if let Some(w) = target {
+                    w.show_update_toast(&version, &url);
+                }
+            }
+        });
+    }
+
+    pub fn activate(self: &Rc<Self>) {
+        self.startup_update_check();
+        let first = self.windows.borrow().is_empty();
+        let w = Window::new(self, false);
+        let startup = if first {
+            self.config.borrow().startup()
+        } else {
+            Startup::Homepage
+        };
+        match startup {
+            Startup::Restore => match Session::load().filter(|s| !s.tabs.is_empty()) {
+                Some(s) => w.restore(s),
+                None => w.open_home(),
+            },
+            Startup::Homepage => w.open_home(),
+            Startup::NewTab => {
+                w.new_tab(None, true);
+            }
+        }
     }
 
     pub fn open(self: &Rc<Self>, files: &[gio::File]) {
+        self.startup_update_check();
         let active = self.gtk.active_window();
         let existing = self
             .windows

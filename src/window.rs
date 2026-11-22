@@ -13,6 +13,40 @@ use webkit6::{WebView, prelude::*};
 
 const ZOOM_STEP: f64 = 0.1;
 
+/// Built-in pages that live in a tab instead of a WebView.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Internal {
+    Settings,
+    History,
+}
+
+impl Internal {
+    pub fn uri(self) -> &'static str {
+        match self {
+            Self::Settings => crate::config::SETTINGS_URI,
+            Self::History => crate::config::HISTORY_URI,
+        }
+    }
+    fn title(self) -> &'static str {
+        match self {
+            Self::Settings => "Settings",
+            Self::History => "History",
+        }
+    }
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Settings => "m-settings-symbolic",
+            Self::History => "m-history-symbolic",
+        }
+    }
+    fn from_uri(uri: &str) -> Option<Self> {
+        let u = uri.trim_end_matches('/');
+        [Self::Settings, Self::History]
+            .into_iter()
+            .find(|p| u.eq_ignore_ascii_case(p.uri()))
+    }
+}
+
 pub struct Tab {
     pub widget: gtk::Revealer,
     root: gtk::Box,
@@ -27,6 +61,17 @@ pub struct Tab {
     from_ntp: Cell<bool>,
     /// View set aside by Back to the new-tab page; Forward brings it back.
     parked: RefCell<Option<WebView>>,
+    /// Showing the native settings page (`mallow://settings`).
+    internal: Cell<Option<Internal>>,
+    /// One-shot "unload after inactivity" timer while in the background.
+    unload_timer: RefCell<Option<glib::SourceId>>,
+    /// History of an unloaded tab, restored when it is shown again.
+    suspended: RefCell<Option<webkit6::WebViewSessionState>>,
+    /// Shares a web process with a popup it opened or was opened by, so
+    /// unloading must not terminate that process.
+    shares_process: Cell<bool>,
+    /// Address-bar text typed but not submitted, kept while another tab is shown.
+    draft: RefCell<Option<String>>,
 }
 
 impl Tab {
@@ -44,6 +89,9 @@ impl Tab {
     }
 
     pub fn uri(&self) -> Option<String> {
+        if let Some(page) = self.internal.get() {
+            return Some(page.uri().into());
+        }
         let live = self
             .view
             .borrow()
@@ -63,15 +111,17 @@ pub struct Window {
     pub app: Rc<App>,
     pub win: gtk::ApplicationWindow,
     pub private: bool,
-    downloads: Rc<crate::downloads::Downloads>,
+    pub downloads: Rc<crate::downloads::Downloads>,
     /// Created with the first WebView, so an idle new-tab page starts no
     /// WebKit network process.
     session: std::cell::OnceCell<webkit6::NetworkSession>,
     tabs: RefCell<Vec<Rc<Tab>>>,
     current: RefCell<Option<Rc<Tab>>>,
     strip: gtk::Box,
+    tabbar: gtk::Box,
+    pub overlay: gtk::Overlay,
     viewport: gtk::Viewport,
-    stack: gtk::Stack,
+    pub stack: gtk::Stack,
     url: gtk::Entry,
     reload: gtk::Button,
     progress: gtk::ProgressBar,
@@ -80,6 +130,8 @@ pub struct Window {
     find_entry: gtk::SearchEntry,
     pub find_label: gtk::Label,
     closed: RefCell<Vec<String>>,
+    /// The user already agreed to close this window with several tabs.
+    close_confirmed: Cell<bool>,
     /// Storage access decisions scoped to the top-level origin and WebKit's domain pair.
     permissions: RefCell<HashMap<(String, String, String), bool>>,
 }
@@ -240,6 +292,8 @@ impl Window {
             tabs: RefCell::default(),
             current: RefCell::default(),
             strip,
+            tabbar,
+            overlay,
             viewport,
             stack,
             url,
@@ -250,8 +304,10 @@ impl Window {
             find_entry,
             find_label,
             closed: RefCell::default(),
+            close_confirmed: Cell::new(false),
             permissions: RefCell::default(),
         });
+        w.apply_prefs();
         menu.set_popover(Some(&w.build_menu()));
         w.connect_signals(&find_prev, &find_next, &find_close);
         w.add_actions();
@@ -277,6 +333,7 @@ impl Window {
         };
         let cb = with(|w| w.navigate_from_omnibox());
         self.url.connect_activate(move |_| cb());
+        crate::suggest::attach(&self.url, &self.app);
         let cb = with(|w| {
             let loading = w.current_view().is_some_and(|v| v.is_loading());
             w.with_view(|v| if loading { v.stop_loading() } else { v.reload() });
@@ -348,9 +405,20 @@ impl Window {
         let weak = Rc::downgrade(self);
         self.win.connect_close_request(move |_| {
             if let Some(w) = weak.upgrade() {
+                let tabs = w.tab_count();
+                if tabs > 1
+                    && w.app.config.borrow().confirm_close
+                    && !w.app.quitting.get()
+                    && !w.close_confirmed.get()
+                {
+                    w.confirm_close(tabs);
+                    return glib::Propagation::Stop;
+                }
                 if w.private {
                     w.downloads.close();
-                } else if w.app.normal_window_count() == 1 && w.app.config.borrow().restore_session {
+                } else if w.app.normal_window_count() == 1 {
+                    // Saved whatever the startup mode, so switching to
+                    // "Restore" later still finds the last session.
                     w.save_session();
                 }
             }
@@ -372,8 +440,14 @@ impl Window {
                 w.url.grab_focus();
             }),
             ("new-tab", |w| {
-                w.new_tab(None, true);
+                let home = {
+                    let cfg = w.app.config.borrow();
+                    (cfg.new_tab == crate::config::NewTab::Homepage && !cfg.homepage.is_empty())
+                        .then(|| cfg.homepage.clone())
+                };
+                w.new_tab(home.as_deref(), true);
             }),
+            ("settings", |w| w.open_internal(Internal::Settings)),
             ("close-tab", |w| {
                 let current = w.current.borrow().clone();
                 if let Some(t) = current {
@@ -400,9 +474,12 @@ impl Window {
             ("zoom-out", |w| {
                 w.with_view(|v| v.set_zoom_level((v.zoom_level() - ZOOM_STEP).max(0.3)))
             }),
-            ("zoom-reset", |w| w.with_view(|v| v.set_zoom_level(1.0))),
+            ("zoom-reset", |w| {
+                let zoom = w.app.config.borrow().default_zoom;
+                w.with_view(|v| v.set_zoom_level(zoom))
+            }),
             ("downloads", |w| w.downloads.show(Some(w.win.upcast_ref()))),
-            ("history", |w| w.show_history()),
+            ("history", |w| w.open_internal(Internal::History)),
             ("bookmarks", |w| w.show_bookmarks()),
             ("clear-data", |w| w.confirm_clear_data()),
         ];
@@ -443,44 +520,131 @@ impl Window {
     }
 
     fn build_menu(self: &Rc<Self>) -> gtk::PopoverMenu {
-        let section = |items: &[(&str, &str)]| {
-            let m = gio::Menu::new();
-            for (label, action) in items {
-                m.append(Some(label), Some(action));
-            }
-            m
+        // GtkPopoverMenu hides an item's icon when it has a label, so rows are custom children.
+        type Row = (&'static str, &'static str, &'static str);
+        let sections: [&[Row]; 4] = [
+            &[
+                ("New tab", "win.new-tab", "m-add-symbolic"),
+                ("New window", "app.new-window", "m-web_asset-symbolic"),
+                (
+                    "New private window",
+                    "app.new-private-window",
+                    "m-visibility_off-symbolic",
+                ),
+            ],
+            &[],
+            &[
+                ("Bookmarks", "win.bookmarks", "m-bookmarks-symbolic"),
+                ("History", "win.history", "m-history-symbolic"),
+                ("Downloads", "win.downloads", "m-download-symbolic"),
+                ("Find in page…", "win.find", "m-search-symbolic"),
+            ],
+            &[
+                ("Settings", "win.settings", "m-settings-symbolic"),
+                ("Clear browsing data…", "win.clear-data", "m-cookie-symbolic"),
+                ("Quit", "app.quit", "m-logout-symbolic"),
+            ],
+        ];
+        let custom = |section: &gio::Menu, id: &str| {
+            let item = gio::MenuItem::new(None, None);
+            item.set_attribute_value("custom", Some(&id.to_variant()));
+            section.append_item(&item);
         };
         let menu = gio::Menu::new();
-        menu.append_section(
-            None,
-            &section(&[
-                ("New tab", "win.new-tab"),
-                ("New window", "app.new-window"),
-                ("New private window", "app.new-private-window"),
-            ]),
-        );
-        menu.append_section(
-            None,
-            &section(&[
-                ("Bookmarks", "win.bookmarks"),
-                ("History", "win.history"),
-                ("Downloads", "win.downloads"),
-                ("Find in page…", "win.find"),
-            ]),
-        );
-        let appearance = gio::Menu::new();
-        let item = gio::MenuItem::new(None, None);
-        item.set_attribute_value("custom", Some(&"appearance".to_variant()));
-        appearance.append_item(&item);
-        menu.append_section(None, &appearance);
-        menu.append_section(
-            None,
-            &section(&[("Clear browsing data…", "win.clear-data"), ("Quit", "app.quit")]),
-        );
+        for (i, rows) in sections.iter().enumerate() {
+            let section = gio::Menu::new();
+            match i {
+                1 => custom(&section, "zoom"),
+                3 => {
+                    let appearance = gio::Menu::new();
+                    custom(&appearance, "appearance");
+                    menu.append_section(None, &appearance);
+                }
+                _ => {}
+            }
+            for (_, action, _) in rows.iter() {
+                custom(&section, action);
+            }
+            menu.append_section(None, &section);
+        }
         let pop = gtk::PopoverMenu::from_model(Some(&menu));
         pop.set_has_arrow(false);
+        for (label, action, icon) in sections.iter().flat_map(|r| r.iter()) {
+            pop.add_child(&self.menu_row(label, action, icon), action);
+        }
+        pop.add_child(&self.zoom_row(&pop), "zoom");
         pop.add_child(&self.appearance_row(), "appearance");
         pop
+    }
+
+    fn menu_row(&self, label: &str, action: &str, icon: &str) -> gtk::Widget {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row.append(&gtk::Image::from_icon_name(icon));
+        row.append(
+            &gtk::Label::builder()
+                .label(label)
+                .xalign(0.0)
+                .hexpand(true)
+                .build(),
+        );
+        let accel = self.app.gtk.accels_for_action(action);
+        if let Some((key, mods)) = accel.first().and_then(gtk::accelerator_parse) {
+            let l = gtk::Label::new(Some(&gtk::accelerator_get_label(key, mods)));
+            l.add_css_class("accelerator");
+            row.append(&l);
+        }
+        let b = gtk::Button::builder().child(&row).action_name(action).build();
+        b.add_css_class("menu-row");
+        b.connect_clicked(|b| {
+            if let Some(p) = b
+                .ancestor(gtk::Popover::static_type())
+                .and_downcast::<gtk::Popover>()
+            {
+                p.popdown();
+            }
+        });
+        b.upcast()
+    }
+
+    fn zoom_row(self: &Rc<Self>, pop: &gtk::PopoverMenu) -> gtk::Widget {
+        let pct = gtk::Button::builder()
+            .label("100%")
+            .action_name("win.zoom-reset")
+            .tooltip_text("Reset zoom (Ctrl+0)")
+            .build();
+        let weak = Rc::downgrade(self);
+        let p = pct.clone();
+        let refresh = move || {
+            let z = weak
+                .upgrade()
+                .and_then(|w| w.current_view())
+                .map_or(1.0, |v| v.zoom_level());
+            p.set_label(&format!("{:.0}%", z * 100.0));
+        };
+        let r = refresh.clone();
+        pop.connect_show(move |_| r());
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        row.add_css_class("zoom-row");
+        row.append(&gtk::Image::from_icon_name("m-search-symbolic"));
+        row.append(
+            &gtk::Label::builder()
+                .label("Zoom")
+                .xalign(0.0)
+                .hexpand(true)
+                .build(),
+        );
+        let out = gtk::Button::from_icon_name("m-remove-symbolic");
+        out.set_action_name(Some("win.zoom-out"));
+        out.set_tooltip_text(Some("Zoom out (Ctrl+−)"));
+        let zin = gtk::Button::from_icon_name("m-add-symbolic");
+        zin.set_action_name(Some("win.zoom-in"));
+        zin.set_tooltip_text(Some("Zoom in (Ctrl++)"));
+        for b in [out, pct, zin] {
+            let r = refresh.clone();
+            b.connect_clicked(move |_| r());
+            row.append(&b);
+        }
+        row.upcast()
     }
 
     fn appearance_row(self: &Rc<Self>) -> gtk::Widget {
@@ -574,6 +738,11 @@ impl Window {
             pending: RefCell::default(),
             from_ntp: Cell::default(),
             parked: RefCell::default(),
+            internal: Cell::new(None),
+            unload_timer: RefCell::default(),
+            suspended: RefCell::default(),
+            shares_process: Cell::new(false),
+            draft: RefCell::new(None),
         });
 
         let (w, t) = (Rc::downgrade(self), Rc::downgrade(&tab));
@@ -633,6 +802,7 @@ impl Window {
         self.strip.append(&tab.widget);
         self.stack.add_child(&tab.page);
         tab.widget.set_reveal_child(true);
+        self.update_tabbar();
         tab
     }
 
@@ -677,6 +847,16 @@ impl Window {
     /// to its opener and is returned to WebKit unloaded.
     pub fn new_related_tab(self: &Rc<Self>, related: &WebView) -> WebView {
         let tab = self.add_tab();
+        tab.shares_process.set(true);
+        let opener = self
+            .tabs
+            .borrow()
+            .iter()
+            .find(|t| t.view.borrow().as_ref() == Some(related))
+            .cloned();
+        if let Some(o) = opener {
+            o.shares_process.set(true);
+        }
         let v = self.ensure_view(&tab, Some(related));
         self.select(&tab);
         v
@@ -742,6 +922,9 @@ impl Window {
             return v.clone();
         }
         tab.parked.replace(None); // new navigation from the new-tab page drops Forward
+        if tab.internal.take().is_some() {
+            tab.set_icon(None); // drop the built-in page's icon; the site's favicon follows
+        }
         let v = view::create(self, tab, related);
         while let Some(child) = tab.page.first_child() {
             tab.page.remove(&child);
@@ -751,8 +934,12 @@ impl Window {
         v
     }
 
-    fn load(self: &Rc<Self>, tab: &Rc<Tab>, uri: &str) {
+    pub fn load(self: &Rc<Self>, tab: &Rc<Tab>, uri: &str) {
         tab.pending.replace(None);
+        if let Some(page) = Internal::from_uri(uri) {
+            self.show_internal(tab, page);
+            return;
+        }
         self.ensure_view(tab, None).load_uri(uri);
     }
 
@@ -760,28 +947,59 @@ impl Window {
         let prev = self.current.replace(Some(tab.clone()));
         if let Some(p) = prev {
             p.root.remove_css_class("active");
+            if !Rc::ptr_eq(&p, tab) {
+                let text = self.url.text();
+                let edited = text != p.uri().unwrap_or_default();
+                p.draft.replace(edited.then(|| text.to_string()));
+                self.schedule_unload(&p);
+            }
         }
+        self.cancel_unload(tab);
         tab.root.add_css_class("active");
         self.stack.set_visible_child(&tab.page);
         self.viewport.scroll_to(&tab.root, None);
-        let pending = tab.pending.take();
-        if let Some(u) = pending {
+        let suspended = tab.suspended.take();
+        if let Some(state) = suspended {
+            // Reload an unloaded tab with its back/forward history intact.
+            tab.pending.take();
+            tab.root.remove_css_class("unloaded");
+            let v = self.ensure_view(tab, None);
+            v.restore_session_state(&state);
+            if let Some(item) = v.back_forward_list().and_then(|l| l.current_item()) {
+                v.go_to_back_forward_list_item(&item);
+            }
+        } else if let Some(u) = tab.pending.take() {
             self.load(tab, &u);
         }
         self.close_find();
         self.status.set_visible(false);
-        self.sync_ui();
+        // A tab switch always shows the new tab's address (sync_ui leaves the
+        // bar alone while it has focus, to protect what the user is typing).
+        // An unsent draft comes back with focus, so sync_ui leaves it alone.
+        if let Some(draft) = tab.draft.take() {
+            self.url.set_text(&draft);
+            self.url.grab_focus();
+            self.url.set_position(-1);
+            self.sync_ui();
+            return;
+        }
+        self.url.set_text(&tab.uri().unwrap_or_default());
         match tab.view.borrow().as_ref() {
             Some(v) => {
                 v.grab_focus();
+            }
+            None if tab.internal.get().is_some() => {
+                tab.page.child_focus(gtk::DirectionType::TabForward);
             }
             None => {
                 self.url.grab_focus();
             }
         }
+        self.sync_ui();
     }
 
     pub fn close_tab(self: &Rc<Self>, tab: &Rc<Tab>) {
+        self.cancel_unload(tab);
         let idx = {
             let mut tabs = self.tabs.borrow_mut();
             let Some(i) = tabs.iter().position(|t| Rc::ptr_eq(t, tab)) else {
@@ -798,6 +1016,7 @@ impl Window {
         // Dropping the view releases its web process resources.
         tab.view.replace(None);
         self.stack.remove(&tab.page);
+        self.update_tabbar();
         let widget = tab.widget.clone();
         widget.set_reveal_child(false);
         if widget.is_child_revealed() {
@@ -834,6 +1053,242 @@ impl Window {
             .find(|t| t.view.borrow().as_ref() == Some(view))
             .cloned();
         tab.map(|t| self.close_tab(&t)).is_some()
+    }
+
+    /// Bottom-left toast offering a newer release. "Update" opens the
+    /// release page; Mallow never installs anything itself.
+    pub fn show_update_toast(self: &Rc<Self>, version: &str, url: &str) {
+        let icon = gtk::Image::from_icon_name(crate::app::APP_ID);
+        icon.set_pixel_size(32);
+        icon.set_accessible_role(gtk::AccessibleRole::Presentation);
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let title = gtk::Label::builder()
+            .label("Update available")
+            .xalign(0.0)
+            .build();
+        title.add_css_class("toast-title");
+        let sub = gtk::Label::builder()
+            .label(format!("Mallow {version} is ready"))
+            .xalign(0.0)
+            .build();
+        sub.add_css_class("toast-sub");
+        text.append(&title);
+        text.append(&sub);
+        let later = gtk::Button::with_label("Later");
+        later.add_css_class("text-btn");
+        let update = gtk::Button::with_label("Update");
+        update.add_css_class("filled");
+        let toast = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        toast.add_css_class("toast");
+        for w in [
+            icon.upcast_ref::<gtk::Widget>(),
+            text.upcast_ref(),
+            later.upcast_ref(),
+            update.upcast_ref(),
+        ] {
+            toast.append(w);
+        }
+        toast.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Mallow {version} is available"
+        ))]);
+        let revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideUp)
+            .transition_duration(250)
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::End)
+            .child(&toast)
+            .build();
+        self.overlay.add_overlay(&revealer);
+        revealer.set_reveal_child(true);
+
+        let dismiss = {
+            let (r, overlay) = (revealer.downgrade(), self.overlay.downgrade());
+            move || {
+                let (Some(r), Some(o)) = (r.upgrade(), overlay.upgrade()) else {
+                    return;
+                };
+                r.set_reveal_child(false);
+                let o2 = o.downgrade();
+                r.connect_child_revealed_notify(move |r| {
+                    if let Some(o) = o2.upgrade() {
+                        o.remove_overlay(r);
+                    }
+                });
+                if !r.is_child_revealed() {
+                    o.remove_overlay(&r);
+                }
+            }
+        };
+        let dismiss = Rc::new(dismiss);
+        let d = dismiss.clone();
+        later.connect_clicked(move |_| d());
+        let (w, url) = (Rc::downgrade(self), url.to_string());
+        update.connect_clicked(move |_| {
+            if let Some(w) = w.upgrade() {
+                w.new_tab(Some(&url), true);
+            }
+            dismiss();
+        });
+    }
+
+    /// Compact mode and tab-bar visibility from the current config.
+    pub fn apply_prefs(&self) {
+        if self.app.config.borrow().compact {
+            self.win.add_css_class("compact");
+        } else {
+            self.win.remove_css_class("compact");
+        }
+        self.update_tabbar();
+    }
+
+    /// Arm unload timers for background tabs (after the setting turns on).
+    pub fn apply_unloading(self: &Rc<Self>) {
+        let background: Vec<Rc<Tab>> = self
+            .tabs
+            .borrow()
+            .iter()
+            .filter(|t| !self.is_current(t) && t.unload_timer.borrow().is_none())
+            .cloned()
+            .collect();
+        for t in background {
+            self.schedule_unload(&t);
+        }
+    }
+
+    fn cancel_unload(&self, tab: &Tab) {
+        if let Some(id) = tab.unload_timer.take() {
+            id.remove();
+        }
+    }
+
+    /// Arm a one-shot timer that unloads `tab` if it stays in the background.
+    fn schedule_unload(self: &Rc<Self>, tab: &Rc<Tab>) {
+        let (on, minutes) = {
+            let c = self.app.config.borrow();
+            (c.unload_tabs, c.unload_after)
+        };
+        if !on || tab.view.borrow().is_none() {
+            return;
+        }
+        self.cancel_unload(tab);
+        let (w, t) = (Rc::downgrade(self), Rc::downgrade(tab));
+        let id = glib::timeout_add_seconds_local_once(minutes * 60, move || {
+            if let (Some(w), Some(t)) = (w.upgrade(), t.upgrade()) {
+                t.unload_timer.take(); // fired: the id is no longer valid
+                w.unload(&t);
+            }
+        });
+        tab.unload_timer.replace(Some(id));
+    }
+
+    /// Drop the tab's web view, keeping its history to restore on return.
+    fn unload(self: &Rc<Self>, tab: &Rc<Tab>) {
+        if self.is_current(tab) || !self.app.config.borrow().unload_tabs {
+            return;
+        }
+        let Some(v) = tab.view.borrow().clone() else {
+            return;
+        };
+        if v.is_playing_audio() || v.is_loading() {
+            self.schedule_unload(tab); // busy: try again later
+            return;
+        }
+        let Some(state) = v.session_state() else { return };
+        tab.suspended.replace(Some(state));
+        tab.pending.replace(v.uri().map(String::from));
+        tab.view.replace(None);
+        tab.parked.replace(None);
+        while let Some(child) = tab.page.first_child() {
+            tab.page.remove(&child);
+        }
+        // WebKit keeps a closed view's process cached for reuse; end it so
+        // the memory is actually returned. The view is detached first, so
+        // its final title/favicon changes no longer reach the tab.
+        if !tab.shares_process.get() {
+            v.terminate_web_process();
+        }
+        tab.root.add_css_class("unloaded");
+    }
+
+    pub fn loaded_count(&self) -> usize {
+        self.tabs
+            .borrow()
+            .iter()
+            .filter(|t| t.view.borrow().is_some())
+            .count()
+    }
+
+    fn update_tabbar(&self) {
+        let hide = self.app.config.borrow().hide_single_tab && self.tabs.borrow().len() <= 1;
+        self.tabbar.set_visible(!hide);
+    }
+
+    pub fn tab_count(&self) -> usize {
+        self.tabs.borrow().len()
+    }
+
+    /// The network session if a page has created it already.
+    pub fn live_session(&self) -> Option<webkit6::NetworkSession> {
+        self.session.get().cloned()
+    }
+
+    fn confirm_close(self: &Rc<Self>, tabs: usize) {
+        let dialog = gtk::AlertDialog::builder()
+            .modal(true)
+            .message(format!("Close {tabs} tabs?"))
+            .detail("You can turn this question off in Settings › General.")
+            .buttons(["Cancel", "Close window"])
+            .cancel_button(0)
+            .default_button(1)
+            .build();
+        let w = Rc::downgrade(self);
+        dialog.choose(Some(&self.win), None::<&gio::Cancellable>, move |r| {
+            if let (Ok(1), Some(w)) = (r, w.upgrade()) {
+                w.close_confirmed.set(true);
+                w.win.close();
+            }
+        });
+    }
+
+    /// Focus the tab already showing `page`, reuse an empty new tab, or
+    /// open a new one.
+    pub fn open_internal(self: &Rc<Self>, page: Internal) {
+        let existing = self
+            .tabs
+            .borrow()
+            .iter()
+            .find(|t| t.internal.get() == Some(page))
+            .cloned();
+        if let Some(t) = existing {
+            self.select(&t);
+            return;
+        }
+        let current = self.current.borrow().clone();
+        let blank = current.filter(|t| {
+            t.view.borrow().is_none() && t.pending.borrow().is_none() && t.internal.get().is_none()
+        });
+        let tab = blank.unwrap_or_else(|| self.add_tab());
+        self.show_internal(&tab, page);
+    }
+
+    /// Turn `tab` into a built-in page. Only trusted callers reach this:
+    /// the omnibox, menus, shortcuts and session restore.
+    fn show_internal(self: &Rc<Self>, tab: &Rc<Tab>, page: Internal) {
+        tab.view.replace(None);
+        tab.parked.replace(None);
+        tab.from_ntp.set(false);
+        while let Some(child) = tab.page.first_child() {
+            tab.page.remove(&child);
+        }
+        let content = match page {
+            Internal::Settings => crate::settings::page(self),
+            Internal::History => crate::history::page(self, tab),
+        };
+        tab.page.append(&content);
+        tab.internal.set(Some(page));
+        tab.set_title(page.title());
+        tab.icon.set_icon_name(Some(page.icon()));
+        self.select(tab);
     }
 
     fn cycle(self: &Rc<Self>, step: isize) {
@@ -959,6 +1414,7 @@ impl Window {
             .max_width_chars(56)
             .build();
         search.add_css_class("ntp-search");
+        crate::suggest::attach(&search, &self.app);
         search.update_property(&[gtk::accessible::Property::Label("Search the web or type a URL")]);
         let (w, t) = (Rc::downgrade(self), Rc::downgrade(tab));
         search.connect_activate(move |e| {
@@ -994,9 +1450,7 @@ impl Window {
                 } else {
                     name.as_str()
                 };
-                let avatar = gtk::Label::new(Some(&util::initial(label).to_string()));
-                avatar.add_css_class("tile-avatar");
-                avatar.add_css_class(&format!("tone-{}", i % 3));
+                let avatar = self.app.site_avatar(&url, label, i);
                 avatar.set_halign(gtk::Align::Center);
                 let caption = gtk::Label::builder()
                     .label(label)
@@ -1048,7 +1502,9 @@ impl Window {
                 .as_ref()
                 .and_then(|v| v.tls_info())
                 .is_some_and(|(_, flags)| flags.is_empty());
-        let (icon, tip) = if uri.is_empty() {
+        let (icon, tip) = if let Some(page) = tab.internal.get() {
+            (page.icon(), "Built-in Mallow page")
+        } else if uri.is_empty() {
             ("m-search-symbolic", "Search or enter address")
         } else if secure {
             ("m-lock-symbolic", "Connection is secure")
@@ -1061,7 +1517,7 @@ impl Window {
             .set_icon_from_icon_name(gtk::EntryIconPosition::Primary, Some(icon));
         self.url
             .set_icon_tooltip_text(gtk::EntryIconPosition::Primary, Some(tip));
-        if uri.is_empty() {
+        if uri.is_empty() || tab.internal.get().is_some() {
             self.url
                 .set_icon_from_icon_name(gtk::EntryIconPosition::Secondary, None);
         } else {
@@ -1563,6 +2019,23 @@ impl Window {
     /// Ask once per host and kind for this window; the request stays pending
     /// until the user answers.
     pub fn ask_permission(self: &Rc<Self>, view: &WebView, req: &webkit6::PermissionRequest) {
+        // Settings › Privacy can block a kind outright: deny without asking.
+        let defaults = self.app.config.borrow().permissions;
+        let block = |a: crate::config::Ask| a == crate::config::Ask::Block;
+        let blocked = if let Some(m) = req.downcast_ref::<webkit6::UserMediaPermissionRequest>() {
+            (m.is_for_video_device() && block(defaults.camera))
+                || (m.is_for_audio_device() && block(defaults.microphone))
+        } else if req.is::<webkit6::GeolocationPermissionRequest>() {
+            block(defaults.location)
+        } else if req.is::<webkit6::NotificationPermissionRequest>() {
+            block(defaults.notifications)
+        } else {
+            false
+        };
+        if blocked {
+            req.deny();
+            return;
+        }
         let kind = if let Some(m) = req.downcast_ref::<webkit6::UserMediaPermissionRequest>() {
             match (m.is_for_video_device(), m.is_for_audio_device()) {
                 (true, true) => "use your camera and microphone",
@@ -1687,38 +2160,6 @@ impl Window {
                 w.new_tab(Some(url), true);
             }
         })
-    }
-
-    fn show_history(self: &Rc<Self>) {
-        let Some(store) = self.app.store() else { return };
-        let result = store.history(1000);
-        let weak = Rc::downgrade(self);
-        gtk::glib::spawn_future_local(async move {
-            let Ok(rows) = result.await else { return };
-            let Some(window) = weak.upgrade() else { return };
-            window.show_history_rows(rows);
-        });
-    }
-
-    fn show_history_rows(self: &Rc<Self>, rows: Vec<(String, String)>) {
-        let app = Rc::downgrade(&self.app);
-        lists::show(
-            self.win.upcast_ref(),
-            lists::ListSpec {
-                title: "History",
-                rows,
-                open: self.open_in_new_tab(),
-                remove: None,
-                clear: Some((
-                    "Clear history",
-                    Box::new(move || {
-                        if let Some(s) = app.upgrade().as_ref().and_then(|a| a.store()) {
-                            s.clear_history();
-                        }
-                    }),
-                )),
-            },
-        );
     }
 
     fn show_bookmarks(self: &Rc<Self>) {

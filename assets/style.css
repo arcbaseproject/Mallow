@@ -515,3 +515,632 @@ button.text-btn {
 button.text-btn:hover {
   background: color-mix(in srgb, var(--primary) 8%, transparent);
 }
+
+/* ---------- compact mode ---------- */
+window.compact .tabbar { padding: 4px 6px 0 6px; }
+window.compact .toolbar { padding: 2px 6px 4px 6px; }
+window.compact .tab,
+window.compact .tab button.tab-main { min-height: 28px; }
+window.compact entry.omnibox { min-height: 32px; }
+window.compact button.icon-btn,
+window.compact menubutton.icon-btn > button { min-width: 30px; min-height: 30px; }
+
+/* ---------- settings page ---------- */
+.settings {
+  background: var(--surface);
+}
+.settings-nav {
+  min-width: 248px;
+  padding: 24px 12px 12px 12px;
+  background: var(--surface-container-low);
+}
+.settings-nav-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--on-surface);
+  margin: 4px 16px 8px 16px;
+}
+list.settings-nav-list {
+  background: none;
+}
+list.settings-nav-list > row {
+  min-height: 52px;
+  padding: 0 16px;
+  margin: 1px 0;
+  border-radius: 999px;
+  color: var(--on-surface-variant);
+  transition: background-color 150ms, color 150ms;
+}
+list.settings-nav-list > row image {
+  -gtk-icon-size: 22px;
+}
+list.settings-nav-list > row label {
+  font-size: 14px;
+  font-weight: 500;
+}
+list.settings-nav-list > row:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+list.settings-nav-list > row:selected {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+list.settings-nav-list > row:selected label {
+  font-weight: 700;
+}
+.settings-column {
+  padding: 32px 0 48px 0;
+}
+.settings-title {
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -0.25px;
+  color: var(--on-surface);
+  margin-bottom: 12px;
+}
+.settings-section {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary);
+  margin: 20px 0 4px 20px;
+}
+/* Segmented cards: one rounded container per row, large outer corners. */
+.settings-card > * {
+  background: var(--surface-container);
+  border-radius: 6px;
+}
+.settings-card > *:first-child {
+  border-top-left-radius: 24px;
+  border-top-right-radius: 24px;
+}
+.settings-card > *:last-child {
+  border-bottom-left-radius: 24px;
+  border-bottom-right-radius: 24px;
+}
+.settings-row {
+  padding: 16px 20px;
+}
+.settings-row-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+.settings-row-sub,
+.settings-note {
+  font-size: 13px;
+  color: var(--on-surface-variant);
+}
+.settings-note {
+  margin: 8px 20px 0 20px;
+}
+.settings-value {
+  font-size: 14px;
+  color: var(--on-surface-variant);
+}
+.settings-error {
+  font-size: 12px;
+  color: var(--error);
+}
+entry.field.error {
+  border-color: var(--error);
+  box-shadow: inset 0 0 0 1px var(--error);
+}
+.settings-banner {
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--error) 14%, var(--surface-container));
+  color: var(--on-surface);
+}
+.settings-banner > image {
+  color: var(--error);
+}
+dropdown.settings-picker > button {
+  min-height: 48px;
+  border-radius: 16px;
+}
+
+/* theme picker: three large segmented tiles */
+.theme-picker > button {
+  padding: 14px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--outline-variant);
+  background: none;
+  box-shadow: none;
+  color: var(--on-surface-variant);
+  transition: background-color 150ms, border-radius 250ms cubic-bezier(0.2, 0, 0, 1);
+}
+.theme-picker > button image {
+  -gtk-icon-size: 24px;
+}
+.theme-picker > button:hover {
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+.theme-picker > button:checked {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  border-color: transparent;
+  border-radius: 28px;
+}
+
+button.swatch.swatch-lg {
+  min-width: 40px;
+  min-height: 40px;
+}
+button.swatch.selected {
+  border-radius: 12px;
+  box-shadow: 0 0 0 3px var(--surface-container), 0 0 0 5px var(--on-surface);
+}
+menubutton.custom-swatch > button {
+  padding: 0;
+  min-width: 40px;
+  min-height: 40px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  border-radius: 999px;
+}
+menubutton.custom-swatch.selected > button {
+  box-shadow: 0 0 0 3px var(--surface-container), 0 0 0 5px var(--on-surface);
+}
+.colour-picker {
+  min-width: 300px;
+}
+scale.hue-slider trough {
+  min-height: 20px;
+  border-radius: 999px;
+  background-image: linear-gradient(to right,
+    hsl(0, 55%, 45%), hsl(60, 55%, 45%), hsl(120, 55%, 45%), hsl(180, 55%, 45%),
+    hsl(240, 55%, 45%), hsl(300, 55%, 45%), hsl(359, 55%, 45%));
+}
+scale.hue-slider highlight {
+  background: none;
+}
+scale.hue-slider slider {
+  min-width: 8px;
+  min-height: 32px;
+  margin: -6px 0;
+  border-radius: 4px;
+  background: var(--surface-container-lowest);
+  box-shadow: 0 0 0 2px var(--on-surface);
+}
+
+/* switches */
+switch {
+  min-width: 48px;
+  min-height: 28px;
+  border-radius: 999px;
+  border: 2px solid var(--outline);
+  background: var(--surface-container-highest);
+  box-shadow: none;
+  padding: 0;
+  transition: background-color 150ms, border-color 150ms;
+}
+switch > slider {
+  min-width: 16px;
+  min-height: 16px;
+  margin: 4px;
+  border-radius: 999px;
+  background: var(--outline);
+  border: none;
+  box-shadow: none;
+  transition: all 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+switch:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+switch:checked > slider {
+  min-width: 24px;
+  min-height: 24px;
+  margin: 0;
+  background: var(--on-primary);
+}
+switch > image {
+  color: transparent;
+}
+
+/* radios */
+checkbutton > radio {
+  min-width: 20px;
+  min-height: 20px;
+  border: 2px solid var(--on-surface-variant);
+  background: none;
+  box-shadow: none;
+  color: var(--primary);
+}
+checkbutton > radio:checked {
+  border-color: var(--primary);
+  background: none;
+  color: var(--primary);
+  -gtk-icon-source: none;
+  box-shadow: inset 0 0 0 3px var(--surface-container), inset 0 0 0 10px var(--primary);
+}
+
+/* drop-downs and buttons */
+dropdown > button {
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-high);
+  box-shadow: none;
+  color: var(--on-surface);
+  padding: 0 12px;
+}
+dropdown > button:hover {
+  background: var(--surface-container-highest);
+}
+button.tonal-btn {
+  min-height: 40px;
+  padding: 0 20px;
+  border-radius: 999px;
+  border: none;
+  box-shadow: none;
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  font-weight: 600;
+  transition: border-radius 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+button.tonal-btn:hover {
+  background: color-mix(in srgb, var(--on-secondary-container) 8%, var(--secondary-container));
+}
+button.tonal-btn:active {
+  border-radius: 12px;
+}
+
+/* slider */
+scale trough {
+  min-height: 16px;
+  border-radius: 999px;
+  background: var(--secondary-container);
+  border: none;
+}
+scale highlight {
+  border-radius: 999px;
+  background: var(--primary);
+}
+scale slider {
+  min-width: 4px;
+  min-height: 36px;
+  margin: -10px 0;
+  border-radius: 2px;
+  background: var(--primary);
+  border: none;
+  box-shadow: 0 0 0 4px var(--surface-container);
+}
+scale marks indicator {
+  min-height: 4px;
+  min-width: 2px;
+  background: var(--on-surface-variant);
+}
+
+.about-hero {
+  padding: 24px 0 8px 0;
+}
+.about-name {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+.about-version {
+  font-size: 14px;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  switch, switch > slider, .theme-picker > button, list.settings-nav-list > row, button.tonal-btn {
+    transition: none;
+  }
+}
+
+/* ---------- dialogs and drop-down lists ---------- */
+window.dialog.message,
+window.dialog.alert {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  border-radius: 28px;
+}
+window.dialog.message .titlebar,
+window.dialog.alert .titlebar {
+  background: none;
+}
+window.dialog.message label.title,
+window.dialog.alert label.title {
+  font-size: 20px;
+  font-weight: 500;
+}
+window.dialog.message .dialog-action-area,
+window.dialog.alert .dialog-action-area {
+  border-top: none;
+  padding: 8px 16px 16px 16px;
+}
+window.dialog.message .dialog-action-area > button,
+window.dialog.alert .dialog-action-area > button {
+  min-height: 40px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  color: var(--primary);
+  font-weight: 600;
+}
+window.dialog.message .dialog-action-area > button:hover,
+window.dialog.alert .dialog-action-area > button:hover {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+popover listview,
+popover list {
+  background: none;
+}
+popover listview > row {
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 999px;
+}
+popover listview > row:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+popover listview > row:selected {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+
+/* tabs unloaded to save memory */
+.tab.unloaded label,
+.tab.unloaded .favicon {
+  opacity: 0.55;
+}
+
+/* ---------- update toast ---------- */
+.toast {
+  margin: 16px;
+  padding: 12px 12px 12px 16px;
+  border-radius: 20px;
+  background: var(--inverse-surface);
+  color: var(--inverse-on-surface);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+.toast-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.toast-sub {
+  font-size: 13px;
+  opacity: 0.8;
+}
+.toast button.text-btn {
+  color: var(--inverse-on-surface);
+}
+.toast button.filled {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+/* ---------- main menu rows (custom children so icons show) ---------- */
+popover button.menu-row {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  border: none;
+}
+popover button.menu-row:hover,
+popover button.menu-row:focus-visible {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+popover button.menu-row .accelerator {
+  color: var(--on-surface-variant);
+}
+.zoom-row {
+  min-height: 40px;
+  padding: 0 4px 0 16px;
+}
+.zoom-row > label {
+  margin-left: 8px;
+}
+.zoom-row > button {
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  border: none;
+}
+.zoom-row > button:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+/* ---------- history page ---------- */
+entry.history-search {
+  min-height: 48px;
+  margin-bottom: 8px;
+}
+list.history-list {
+  background: none;
+}
+list.history-list > row {
+  border-radius: 16px;
+  padding: 0;
+  transition: background-color 120ms;
+}
+list.history-list > row:hover {
+  background: var(--surface-container);
+}
+list.history-list > row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.history-entry {
+  padding: 10px 8px 10px 12px;
+}
+.history-day {
+  margin: 20px 0 6px 12px;
+}
+.tile-avatar.history-avatar {
+  min-width: 40px;
+  min-height: 40px;
+  font-size: 16px;
+}
+list.history-list > row:hover .history-avatar {
+  border-radius: 12px;
+}
+button.history-remove {
+  opacity: 0;
+  transition: opacity 120ms;
+}
+list.history-list > row:hover button.history-remove,
+list.history-list > row:focus-within button.history-remove {
+  opacity: 1;
+}
+
+/* ---------- password manager dialogs (gtk::Dialog with .mallow) ---------- */
+window.dialog.mallow {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  border-radius: 28px;
+}
+window.dialog.mallow .dialog-headline {
+  font-size: 24px;
+  color: var(--on-surface);
+}
+window.dialog.mallow .dialog-action-area {
+  border-top: none;
+  padding: 8px 24px 24px 24px;
+  border-spacing: 8px;
+}
+window.dialog.mallow .dialog-action-area > button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  color: var(--primary);
+  font-weight: 600;
+}
+window.dialog.mallow .dialog-action-area > button:hover {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+window.dialog.mallow .dialog-action-area > button.filled {
+  padding: 0 24px;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+window.dialog.mallow .dialog-action-area > button.filled:disabled {
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+  color: color-mix(in srgb, var(--on-surface) 38%, transparent);
+}
+window.dialog.mallow label {
+  color: var(--on-surface-variant);
+}
+window.dialog.mallow label.dialog-headline {
+  color: var(--on-surface);
+}
+window.dialog.mallow entry.field {
+  background: var(--surface-container-highest);
+  border-color: var(--outline-variant);
+}
+window.dialog.mallow entry.field:focus-within {
+  border-color: var(--primary);
+}
+window.dialog.mallow scrolledwindow,
+window.dialog.mallow list {
+  background: none;
+  border-radius: 16px;
+}
+window.dialog.mallow list > row {
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+window.dialog.mallow list > row:selected {
+  background: var(--secondary-container);
+}
+window.dialog.mallow list > row:selected label {
+  color: var(--on-secondary-container);
+}
+window.dialog.mallow button.action-row {
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  box-shadow: none;
+  color: var(--on-surface);
+}
+window.dialog.mallow button.action-row > label {
+  color: inherit;
+}
+window.dialog.mallow button.action-row:hover,
+window.dialog.mallow button.action-row:focus-visible {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+window.dialog.mallow button.action-row.destructive {
+  color: var(--error);
+}
+window.dialog.mallow .titlebar {
+  min-height: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+window.dialog.mallow button label {
+  color: inherit;
+}
+window.dialog.mallow entry.field:focus-within {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+/* ---------- settings search ---------- */
+entry.omnibox.settings-search {
+  margin-top: 16px;
+  margin-bottom: 4px;
+}
+
+/* ---------- address suggestions ---------- */
+popover.suggest > contents {
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--surface-container-high);
+}
+list.suggest-list {
+  background: none;
+}
+list.suggest-list > row {
+  padding: 8px 12px;
+  border-radius: 12px;
+}
+list.suggest-list > row:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+list.suggest-list > row:selected {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+.suggest-title {
+  color: var(--on-surface);
+}
+.suggest-url {
+  font-size: 12px;
+  color: var(--primary);
+}
+list.suggest-list > row:selected .suggest-title,
+list.suggest-list > row:selected .suggest-url {
+  color: var(--on-secondary-container);
+}
+
+/* Site badge once its favicon is known: neutral backing behind the icon. */
+.tile-avatar.has-favicon {
+  background: var(--surface-container-highest);
+}
+.tile-avatar.has-favicon image {
+  -gtk-icon-size: 28px;
+}
+.history-avatar.has-favicon image {
+  -gtk-icon-size: 20px;
+}
+.suggest-icon {
+  -gtk-icon-size: 16px;
+  color: var(--on-surface-variant);
+}

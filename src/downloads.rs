@@ -42,9 +42,9 @@ impl Downloads {
         win.present();
     }
 
-    pub fn track(&self, parent: Option<&gtk::Window>, dl: &Download) {
-        dl.connect_decide_destination(|dl, suggested| {
-            let dir = glib::user_special_dir(glib::UserDirectory::Downloads).unwrap_or_else(glib::home_dir);
+    /// `dir` is the folder chosen in Settings at the time the download starts.
+    pub fn track(&self, parent: Option<&gtk::Window>, dl: &Download, dir: std::path::PathBuf) {
+        dl.connect_decide_destination(move |dl, suggested| {
             if let Err(e) = std::fs::create_dir_all(&dir) {
                 eprintln!("mallow: cannot create {}: {e}", dir.display());
             }
@@ -108,8 +108,9 @@ impl Downloads {
         });
         let cancel = std::cell::Cell::new(Some(cancel));
         dl.connect_finished({
-            let (bar, status, action) = (bar.clone(), status.clone(), action.clone());
+            let (bar, status, action, row) = (bar.clone(), status.clone(), action.clone(), row.clone());
             move |dl| {
+                row.add_css_class("finished");
                 // `failed` fires before `finished` on error; keep its message.
                 if status.has_css_class("error") {
                     if let Some(id) = cancel.take() {
@@ -148,6 +149,21 @@ impl Downloads {
                 format!("Failed: {}", err.message())
             });
         });
+    }
+
+    /// Remove finished, failed and cancelled entries; files stay on disk.
+    pub fn clear_finished(&self) {
+        let Some((_, list)) = self.window.get() else {
+            return;
+        };
+        let mut i = 0;
+        while let Some(row) = list.row_at_index(i) {
+            if row.child().is_some_and(|c| c.has_css_class("finished")) {
+                list.remove(&row);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     pub fn close(&self) {

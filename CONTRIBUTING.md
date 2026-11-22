@@ -35,9 +35,11 @@ Then open the browser and try the feature you changed. Tell us in the PR what yo
 | `src/app.rs` | App-wide state: config, theme, WebKit sessions, content filter, shortcuts |
 | `src/window.rs` | One browser window: tab strip, toolbar, new-tab page, popovers |
 | `src/view.rs` | Creates WebViews and decides navigation, download and permission policy |
+| `src/settings.rs` | The native `mallow://settings` page. Each section builds the first time you open it |
+| `src/history.rs` | The native `mallow://history` page |
 | `src/downloads.rs` | Download destinations and the downloads window |
 | `src/store.rs` | History and bookmarks in SQLite, written from a background thread |
-| `src/config.rs` | `config.toml` and the saved session |
+| `src/config.rs` | The typed settings model, validation, `config.toml` and the saved session |
 | `src/theme.rs` | Turns one accent colour into Material colour roles |
 | `src/util.rs` | Pure helpers with unit tests: URL parsing, filenames, blocklist rules |
 | `assets/style.css` | All styling. Use `var(--role)` colours, never hex values |

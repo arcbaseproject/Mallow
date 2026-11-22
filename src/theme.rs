@@ -53,6 +53,17 @@ fn tone(h: f64, s: f64, t: f64) -> String {
     format!("#{:02x}{:02x}{:02x}", to(r), to(g), to(b))
 }
 
+/// Hue in degrees of a `#rrggbb` colour.
+pub fn hue(hex: &str) -> Option<f64> {
+    parse_hex(hex).map(|c| rgb_to_hsl(c).0)
+}
+
+/// A seed colour for `hue` with Material-like chroma and tone, so any hue
+/// the user picks still yields a balanced palette.
+pub fn seed_for_hue(hue: f64) -> String {
+    tone(hue.rem_euclid(360.0), 0.55, 40.0).to_ascii_uppercase()
+}
+
 /// (role, light tone, dark tone, palette): 0 primary, 1 secondary, 2 tertiary, 3 neutral, 4 neutral-variant.
 const ROLES: &[(&str, f64, f64, usize)] = &[
     ("primary", 40.0, 80.0, 0),
@@ -122,6 +133,9 @@ mod tests {
         assert_eq!(parse_hex("#ff0000"), Some((1.0, 0.0, 0.0)));
         assert_eq!(parse_hex("ff0000"), None);
         assert_eq!(parse_hex("#ff00"), None);
+        let seed = seed_for_hue(270.0);
+        assert!(parse_hex(&seed).is_some());
+        assert!((hue(&seed).unwrap() - 270.0).abs() < 2.0);
     }
 
     #[test]

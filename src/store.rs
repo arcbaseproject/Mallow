@@ -11,12 +11,27 @@ CREATE INDEX IF NOT EXISTS history_visited ON history (visited);
 CREATE TABLE IF NOT EXISTS bookmarks (url TEXT PRIMARY KEY, title TEXT NOT NULL, added INTEGER NOT NULL);
 ";
 
+/// Latest visit to one URL.
+#[derive(Debug, Clone)]
+pub struct Visit {
+    pub url: String,
+    pub title: String,
+    /// Unix seconds.
+    pub when: i64,
+}
+
 enum Cmd {
     Visit(String, String),
+    /// Title known after the visit was recorded.
+    Title(String, String),
     Bookmark(String, String),
     Unbookmark(String),
     ClearHistory,
-    History(u32, futures_channel::oneshot::Sender<Vec<(String, String)>>),
+    /// Remove every visit to one URL.
+    Forget(String),
+    History(u32, futures_channel::oneshot::Sender<Vec<Visit>>),
+    /// History matching typed text, for address-bar suggestions.
+    Suggest(String, u32, futures_channel::oneshot::Sender<Vec<Visit>>),
     Stop,
 }
 
@@ -47,9 +62,17 @@ fn apply(db: &Connection, cmd: Cmd) -> rusqlite::Result<usize> {
             let _ = reply.send(history(db, limit));
             Ok(0)
         }
+        Cmd::Suggest(query, limit, reply) => {
+            let _ = reply.send(suggest(db, &query, limit));
+            Ok(0)
+        }
         Cmd::Visit(url, title) => db.execute(
             "INSERT INTO history VALUES (?1, ?2, ?3)",
             params![url, title, now()],
+        ),
+        Cmd::Title(url, title) => db.execute(
+            "UPDATE history SET title = ?2 WHERE url = ?1 AND title = ''",
+            params![url, title],
         ),
         Cmd::Bookmark(url, title) => db.execute(
             "INSERT INTO bookmarks VALUES (?1, ?2, ?3) ON CONFLICT(url) DO UPDATE SET title = excluded.title",
@@ -57,6 +80,7 @@ fn apply(db: &Connection, cmd: Cmd) -> rusqlite::Result<usize> {
         ),
         Cmd::Unbookmark(url) => db.execute("DELETE FROM bookmarks WHERE url = ?1", [url]),
         Cmd::ClearHistory => db.execute("DELETE FROM history", []),
+        Cmd::Forget(url) => db.execute("DELETE FROM history WHERE url = ?1", [url]),
     }
 }
 
@@ -100,8 +124,17 @@ impl Store {
         self.send(Cmd::Visit(url.into(), title.into()));
     }
 
+    /// Fill in the title of untitled visits to `url`.
+    pub fn title(&self, url: &str, title: &str) {
+        self.send(Cmd::Title(url.into(), title.into()));
+    }
+
     pub fn clear_history(&self) {
         self.send(Cmd::ClearHistory);
+    }
+
+    pub fn forget(&self, url: &str) {
+        self.send(Cmd::Forget(url.into()));
     }
 
     pub fn is_bookmarked(&self, url: &str) -> bool {
@@ -130,9 +163,19 @@ impl Store {
         }
     }
 
-    pub fn history(&self, limit: u32) -> futures_channel::oneshot::Receiver<Vec<(String, String)>> {
+    pub fn history(&self, limit: u32) -> futures_channel::oneshot::Receiver<Vec<Visit>> {
         let (reply, result) = futures_channel::oneshot::channel();
         self.send(Cmd::History(limit, reply));
+        result
+    }
+}
+
+impl Store {
+    /// Visited pages whose URL or title contains `query`. Sites whose host
+    /// starts with it rank first, then the most visited.
+    pub fn suggest(&self, query: &str, limit: u32) -> futures_channel::oneshot::Receiver<Vec<Visit>> {
+        let (reply, result) = futures_channel::oneshot::channel();
+        self.send(Cmd::Suggest(query.to_lowercase(), limit, reply));
         result
     }
 }
@@ -143,13 +186,53 @@ impl Drop for Store {
     }
 }
 
-fn history(db: &Connection, limit: u32) -> Vec<(String, String)> {
+fn history(db: &Connection, limit: u32) -> Vec<Visit> {
     db.prepare("SELECT url, title, MAX(visited) AS v FROM history GROUP BY url ORDER BY v DESC LIMIT ?1")
-        .and_then(|mut s| s.query_map([limit], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())
+        .and_then(|mut s| {
+            s.query_map([limit], |r| {
+                Ok(Visit {
+                    url: r.get(0)?,
+                    title: r.get(1)?,
+                    when: r.get(2)?,
+                })
+            })?
+            .collect()
+        })
         .unwrap_or_else(|e| {
             eprintln!("mallow: history query failed: {e}");
             Vec::new()
         })
+}
+
+fn suggest(db: &Connection, query: &str, limit: u32) -> Vec<Visit> {
+    let like = format!(
+        "%{}%",
+        query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    db.prepare(
+        "SELECT url, title, MAX(visited) AS v FROM history
+         WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
+         GROUP BY url
+         ORDER BY (instr(url, '://' || ?2) > 0 OR instr(url, '://www.' || ?2) > 0) DESC, COUNT(*) DESC, v DESC
+         LIMIT ?3",
+    )
+    .and_then(|mut s| {
+        s.query_map(params![like, query, limit], |r| {
+            Ok(Visit {
+                url: r.get(0)?,
+                title: r.get(1)?,
+                when: r.get(2)?,
+            })
+        })?
+        .collect()
+    })
+    .unwrap_or_else(|e| {
+        eprintln!("mallow: suggestion query failed: {e}");
+        Vec::new()
+    })
 }
 
 #[cfg(test)]
@@ -169,6 +252,8 @@ mod tests {
             s.visit("https://a", "A");
             s.visit("https://b", "B");
             s.visit("https://a", "A2");
+            s.visit("https://c", "");
+            s.title("https://c", "Late title");
         }
         let s = Store::open(&path).unwrap();
         assert!(s.is_bookmarked("https://a"));
@@ -177,7 +262,30 @@ mod tests {
         assert_eq!(marks.len(), 2);
         assert!(marks.contains(&("https://a".to_string(), "Renamed".to_string())));
         let h = gtk::glib::MainContext::new().block_on(s.history(10)).unwrap();
-        assert_eq!(h.len(), 2);
+        assert_eq!(h.len(), 3);
+        assert!(h.iter().any(|v| v.url == "https://a" && v.when > 0));
+        assert!(h.iter().any(|v| v.url == "https://c" && v.title == "Late title"));
+        s.forget("https://c");
+        s.visit("https://mail.example/inbox", "Inbox");
+        s.visit("https://other.example/?q=gmail", "Search 100% off_");
+        s.visit("https://www.gmail.example/", "Mail");
+        let found = |q| gtk::glib::MainContext::new().block_on(s.suggest(q, 10)).unwrap();
+        let urls: Vec<_> = found("GMA").into_iter().map(|v| v.url).collect();
+        // host prefix ranks above a mere substring match; case-insensitive
+        assert_eq!(
+            urls,
+            ["https://www.gmail.example/", "https://other.example/?q=gmail"]
+        );
+        // LIKE wildcards in the query are literal
+        assert_eq!(found("100%").len(), 1);
+        assert_eq!(found("f_").len(), 1);
+        assert!(found("o%f").is_empty());
+        s.forget("https://mail.example/inbox");
+        s.forget("https://other.example/?q=gmail");
+        s.forget("https://www.gmail.example/");
+        s.forget("https://b");
+        let h = gtk::glib::MainContext::new().block_on(s.history(10)).unwrap();
+        assert_eq!(h.len(), 1);
         s.unbookmark("https://a");
         s.unbookmark("https://b");
         assert!(!s.is_bookmarked("https://a"));
