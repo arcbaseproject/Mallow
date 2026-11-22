@@ -18,7 +18,7 @@ use crate::config::{Autoplay, Config, Cookies};
 use block2::RcBlock;
 use gtk::{gdk, glib, prelude::*};
 use objc2::{
-    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
+    DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send,
     rc::Retained,
     runtime::{AnyObject, ProtocolObject},
 };
@@ -26,7 +26,7 @@ use objc2_app_kit::{NSEventModifierFlags, NSView, NSWindow};
 use objc2_foundation::{
     NSArray, NSDate, NSDictionary, NSError, NSKeyValueChangeKey, NSKeyValueObservingOptions, NSNumber,
     NSObject, NSObjectNSKeyValueObserverRegistration, NSObjectProtocol, NSPoint, NSRect, NSSet, NSSize,
-    NSString, NSURL, NSURLRequest, NSURLResponse, NSHTTPURLResponse,
+    NSProgressReporting, NSString, NSURL, NSURLRequest, NSURLResponse, NSHTTPURLResponse,
 };
 use objc2_web_kit::*;
 use std::{
@@ -293,7 +293,7 @@ define_class!(
         ) {
             let cancel = self.ivars().upgrade().is_some_and(|inner| {
                 let request = unsafe { action.request() };
-                let Some(uri) = (unsafe { request.URL() }).and_then(|u| u.absoluteString()) else {
+                let Some(uri) = request.URL().and_then(|u| u.absoluteString()) else {
                     return false;
                 };
                 let kind = unsafe { action.navigationType() };
@@ -330,7 +330,7 @@ define_class!(
                 let resp = unsafe { response.response() };
                 let attachment = resp
                     .downcast_ref::<NSHTTPURLResponse>()
-                    .and_then(|h| unsafe { h.valueForHTTPHeaderField(&ns("Content-Disposition")) })
+                    .and_then(|h| h.valueForHTTPHeaderField(&ns("Content-Disposition")))
                     .is_some_and(|v| v.to_string().trim_start().to_ascii_lowercase().starts_with("attachment"));
                 let r = Response {
                     main_resource: unsafe { response.isForMainFrame() },
@@ -394,7 +394,7 @@ define_class!(
     }
 
     unsafe impl WKUIDelegate for Delegate {
-        #[unsafe(method(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
+        #[unsafe(method_id(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
         fn create(
             &self,
             _w: &WKWebView,
@@ -437,7 +437,9 @@ define_class!(
                 WKMediaCaptureType::Microphone => (false, true),
                 _ => (true, true),
             };
-            let decide = RcBlock::copy(handler);
+            let Some(decide) = (unsafe { RcBlock::copy(handler as *const _ as *mut _) }) else {
+                return;
+            };
             let req = PermissionRequest {
                 kind: Permission::Media { video, audio },
                 answer: Rc::new(Cell::new(Some(Box::new(move |ok: bool| {
@@ -525,7 +527,7 @@ impl Delegate {
         }
         let kind = match code {
             -1003 | -1006 => LoadError::NotFound,
-            -1200..=-1201 | -1202 | -1203 | -1204 | -1205 | -1206 => LoadError::Tls,
+            -1206..=-1200 => LoadError::Tls,
             -1004 => LoadError::Refused,
             -1001 => LoadError::TimedOut,
             -1009 | -1005 => LoadError::Offline,
@@ -615,7 +617,7 @@ impl Drop for Inner {
                 self.wk.setUIDelegate(None);
             }
         }
-        unsafe { self.wk.removeFromSuperview() };
+        self.wk.removeFromSuperview();
         for f in self.destroyed.take() {
             f();
         }
@@ -721,8 +723,8 @@ impl View {
 
     pub fn grab_focus(&self) {
         self.0.placeholder.grab_focus();
-        if let Some(win) = unsafe { self.0.wk.window() } {
-            unsafe { win.makeFirstResponder(Some(&self.0.wk)) };
+        if let Some(win) = self.0.wk.window() {
+            win.makeFirstResponder(Some(&self.0.wk));
         }
     }
 
@@ -808,11 +810,9 @@ impl View {
     pub fn set_zoom(&self, level: f64) {
         unsafe { self.0.wk.setPageZoom(level) };
     }
-    /// No mute API; parking a view pauses its media instead.
+    /// No mute API; a parked view suspends its media instead.
     pub fn set_muted(&self, muted: bool) {
-        if muted {
-            unsafe { self.0.wk.pauseAllMediaPlayback(None) };
-        }
+        unsafe { self.0.wk.setAllMediaPlaybackSuspended_completionHandler(muted, None) };
     }
     /// WKWebView ends its process when the view is released.
     pub fn terminate(&self) {}
@@ -1036,13 +1036,13 @@ fn attach_native(inner: &Rc<Inner>) {
     let weak = Rc::downgrade(inner);
     inner.placeholder.connect_unmap(move |_| {
         if let Some(inner) = weak.upgrade() {
-            unsafe { inner.wk.setHidden(true) };
+            inner.wk.setHidden(true);
         }
     });
     let weak = Rc::downgrade(inner);
     inner.placeholder.connect_unrealize(move |_| {
         if let Some(inner) = weak.upgrade() {
-            unsafe { inner.wk.removeFromSuperview() };
+            inner.wk.removeFromSuperview();
         }
     });
 }
@@ -1072,7 +1072,7 @@ fn place(inner: &Inner, p: &gtk::DrawingArea) {
     let frame = NSRect::new(NSPoint::new(x, origin_y), NSSize::new(w, h));
     let attached = unsafe { wk.superview() }.is_some_and(|s| &*s == &*content);
     if !attached {
-        unsafe { wk.removeFromSuperview() };
+        wk.removeFromSuperview();
         content.addSubview(wk);
     }
     if wk.frame() != frame {
@@ -1175,7 +1175,7 @@ impl Download {
 
     pub fn source(&self) -> Option<String> {
         unsafe { self.0.wk.originalRequest() }
-            .and_then(|r| unsafe { r.URL() })
+            .and_then(|r| r.URL())
             .and_then(|u| u.absoluteString())
             .map(|s| s.to_string())
     }
