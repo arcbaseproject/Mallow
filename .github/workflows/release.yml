@@ -3,12 +3,14 @@
 #
 # Push a tag like v0.1.0: builds the tarball, .deb and .rpm and attaches them
 # to a draft GitHub release, which you review and publish by hand.
-# Run it manually (Actions > Release > Run workflow): builds only, as artifacts.
+# Push a release-* branch, or run it manually (Actions > Release > Run workflow):
+# builds only, as artifacts, to check the packages before tagging.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+    branches: ["release-*"]
   workflow_dispatch:
 
 permissions:
