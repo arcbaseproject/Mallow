@@ -402,12 +402,14 @@ define_class!(
             _action: &WKNavigationAction,
             _features: &WKWindowFeatures,
         ) -> Option<Retained<WKWebView>> {
-            let inner = self.ivars().upgrade()?;
-            PENDING_CONFIG.with(|c| c.replace(Some(config.retain())));
-            let opener = View(inner.clone());
-            let created = inner.create.all().iter().find_map(|f| f(&opener));
-            PENDING_CONFIG.with(|c| c.replace(None));
-            created.map(|v| v.0.wk.clone())
+            let inner = self.ivars().upgrade();
+            inner.and_then(|inner| {
+                PENDING_CONFIG.with(|c| c.replace(Some(config.retain())));
+                let opener = View(inner.clone());
+                let created = inner.create.all().iter().find_map(|f| f(&opener));
+                PENDING_CONFIG.with(|c| c.replace(None));
+                created.map(|v| v.0.wk.clone())
+            })
         }
 
         #[unsafe(method(webViewDidClose:))]
@@ -437,7 +439,9 @@ define_class!(
                 WKMediaCaptureType::Microphone => (false, true),
                 _ => (true, true),
             };
-            let Some(decide) = (unsafe { RcBlock::copy(handler as *const _ as *mut _) }) else {
+            let ptr = handler as *const block2::DynBlock<dyn Fn(WKPermissionDecision)>
+                as *mut block2::DynBlock<dyn Fn(WKPermissionDecision)>;
+            let Some(decide) = (unsafe { RcBlock::copy(ptr) }) else {
                 return;
             };
             let req = PermissionRequest {
@@ -1149,7 +1153,7 @@ impl Download {
                 let Some(inner) = weak.upgrade() else {
                     return glib::ControlFlow::Break;
                 };
-                let p = unsafe { inner.wk.progress() };
+                let p = inner.wk.progress();
                 let (done, total) = (p.completedUnitCount().max(0) as u64, p.totalUnitCount());
                 let fraction = if total > 0 { done as f64 / total as f64 } else { 0.0 };
                 for f in inner.progress.all() {
@@ -1186,7 +1190,7 @@ impl Download {
         self.0.destination.borrow().clone()
     }
     pub fn received_bytes(&self) -> u64 {
-        unsafe { self.0.wk.progress() }.completedUnitCount().max(0) as u64
+        self.0.wk.progress().completedUnitCount().max(0) as u64
     }
     pub fn cancel(&self) {
         unsafe { self.0.wk.cancel(None) };
