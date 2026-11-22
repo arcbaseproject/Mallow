@@ -1,0 +1,517 @@
+/* Mallow — Material 3 Expressive styling.
+ * Colours come only from the role tokens generated in src/theme.rs. */
+
+window.mallow {
+  background: var(--surface);
+  color: var(--on-surface);
+}
+
+/* ---------- tab strip ---------- */
+.tabbar {
+  background: var(--surface-container);
+  padding: 6px 8px 2px 8px;
+}
+window.private .tabbar,
+window.private .toolbar,
+window.private .findbar {
+  background: var(--tertiary-container);
+}
+.private-badge {
+  color: var(--on-tertiary-container);
+  font-weight: 600;
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tertiary) 18%, transparent);
+}
+
+.tab {
+  border-radius: 999px;
+  color: var(--on-surface-variant);
+  padding: 0 4px 0 2px;
+  margin: 0 1px;
+  min-height: 34px;
+  transition: background-color 180ms cubic-bezier(0.2, 0, 0, 1), color 180ms;
+}
+.tab:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+.tab.active {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+.tab button.tab-main {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: inherit;
+  padding: 0 6px 0 10px;
+  min-height: 34px;
+  border-radius: 999px;
+}
+.tab label {
+  font-size: 13px;
+  font-weight: 500;
+}
+.tab.active label {
+  font-weight: 650;
+}
+.tab .favicon {
+  -gtk-icon-size: 16px;
+}
+.tab button.tab-close {
+  opacity: 0;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: inherit;
+  transition: opacity 120ms, background-color 120ms;
+  -gtk-icon-size: 16px;
+}
+.tab:hover button.tab-close,
+.tab.active button.tab-close,
+.tab:focus-within button.tab-close {
+  opacity: 1;
+}
+.tab button.tab-close:hover {
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+}
+
+/* ---------- toolbar ---------- */
+.toolbar {
+  background: var(--surface-container);
+  padding: 4px 8px 8px 8px;
+}
+
+button.icon-btn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 999px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--on-surface-variant);
+  -gtk-icon-size: 20px;
+  transition: background-color 150ms, border-radius 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+button.icon-btn:hover,
+menubutton.icon-btn > button:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+button.icon-btn:active,
+menubutton.icon-btn > button:active,
+menubutton.icon-btn > button:checked {
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+  border-radius: 12px; /* expressive shape morph on press */
+}
+button.icon-btn:disabled {
+  color: color-mix(in srgb, var(--on-surface) 38%, transparent);
+}
+menubutton.icon-btn > button {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 999px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--on-surface-variant);
+  transition: background-color 150ms, border-radius 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+entry.omnibox {
+  min-height: 40px;
+  border-radius: 999px;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+  padding: 0 14px;
+  margin: 0 6px;
+  font-size: 14px;
+  transition: background-color 150ms, box-shadow 150ms;
+}
+entry.omnibox:hover {
+  background: color-mix(in srgb, var(--on-surface) 6%, var(--surface-container-highest));
+}
+entry.omnibox:focus-within {
+  background: var(--surface-container-lowest);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+entry.omnibox > image {
+  color: var(--on-surface-variant);
+  -gtk-icon-size: 18px;
+}
+entry.omnibox > image.right:hover {
+  color: var(--primary);
+}
+entry.omnibox selection {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+entry.omnibox > text > placeholder {
+  color: var(--on-surface-variant);
+}
+
+.findbar {
+  background: var(--surface-container);
+  padding: 0 8px 8px 8px;
+}
+.findbar entry.omnibox {
+  min-height: 34px;
+}
+label.error {
+  color: var(--error);
+}
+
+/* ---------- content area ---------- */
+progressbar.loadbar > trough {
+  min-height: 3px;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+progressbar.loadbar > trough > progress {
+  min-height: 3px;
+  background: var(--primary);
+  border-radius: 0 3px 3px 0;
+}
+.status {
+  background: var(--inverse-surface);
+  color: var(--inverse-on-surface);
+  border-radius: 10px;
+  padding: 4px 10px;
+  margin: 8px;
+  font-size: 12px;
+}
+
+.ntp {
+  background: var(--surface);
+}
+.ntp-column {
+  margin: 32px 24px;
+}
+.ntp-title {
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  color: var(--on-surface);
+  margin: 12px 0 24px 0;
+}
+.ntp-note {
+  color: var(--on-surface-variant);
+  margin-bottom: 24px;
+}
+entry.ntp-search {
+  min-height: 56px;
+  border-radius: 999px;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  padding: 0 20px;
+  font-size: 16px;
+  margin-bottom: 32px;
+  transition: background-color 150ms, box-shadow 150ms;
+}
+entry.ntp-search:hover {
+  background: var(--surface-container-highest);
+}
+entry.ntp-search:focus-within {
+  background: var(--surface-container-lowest);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+entry.ntp-search > image {
+  color: var(--on-surface-variant);
+  -gtk-icon-size: 22px;
+  margin-right: 8px;
+}
+entry.ntp-search > text > placeholder {
+  color: var(--on-surface-variant);
+}
+.ntp-tiles > flowboxchild {
+  padding: 0;
+  background: none;
+}
+button.tile {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 14px 8px 10px 8px;
+  border-radius: 24px;
+  transition: background-color 150ms;
+}
+button.tile:hover {
+  background: var(--surface-container);
+}
+button.tile:active {
+  background: var(--surface-container-high);
+}
+.tile-avatar {
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 999px;
+  font-size: 22px;
+  font-weight: 600;
+  transition: border-radius 250ms cubic-bezier(0.2, 0, 0, 1);
+}
+button.tile:hover .tile-avatar,
+button.tile:focus-visible .tile-avatar {
+  border-radius: 18px; /* expressive shape morph */
+}
+.tile-avatar.tone-0 { background: var(--primary-container); color: var(--on-primary-container); }
+.tile-avatar.tone-1 { background: var(--secondary-container); color: var(--on-secondary-container); }
+.tile-avatar.tone-2 { background: var(--tertiary-container); color: var(--on-tertiary-container); }
+.tile-caption {
+  font-size: 13px;
+  color: var(--on-surface);
+}
+
+/* ---------- menus, popovers, dialogs ---------- */
+popover > contents {
+  border-radius: 20px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  padding: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0, 0, 0, 0.12);
+  border: none;
+}
+popover modelbutton {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+}
+popover modelbutton:hover,
+popover modelbutton:focus-visible {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+popover modelbutton accelerator {
+  color: var(--on-surface-variant);
+}
+popover separator {
+  background: var(--outline-variant);
+  margin: 4px 12px;
+}
+
+.appearance {
+  padding: 6px 4px;
+}
+.segmented togglebutton {
+  min-height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--outline-variant);
+  background: none;
+  box-shadow: none;
+  color: var(--on-surface-variant);
+}
+.segmented togglebutton:checked {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  border-color: transparent;
+}
+button.swatch {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  border: 2px solid var(--surface-container);
+  box-shadow: 0 0 0 1px var(--outline-variant);
+  transition: border-radius 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+button.swatch:hover {
+  border-radius: 8px;
+}
+
+.list-window {
+  padding: 16px;
+}
+list.item-list,
+list.downloads {
+  background: none;
+}
+list.item-list > row,
+list.downloads > row {
+  border-radius: 14px;
+  padding: 8px 12px;
+}
+list.item-list > row:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+.download-row {
+  padding: 4px 0;
+}
+button.tonal {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  border-radius: 999px;
+  min-height: 40px;
+  padding: 0 20px;
+  border: none;
+  box-shadow: none;
+}
+
+/* ---------- focus & motion ---------- */
+button:focus-visible,
+togglebutton:focus-visible,
+menubutton > button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab, button.icon-btn, button.tile, .tile-avatar, entry.ntp-search, button.swatch, entry.omnibox,
+  menubutton.icon-btn > button, button.tab-close {
+    transition: none;
+  }
+}
+
+progressbar > trough > progress {
+  background: var(--primary);
+  border: none;
+}
+progressbar > trough {
+  background: var(--surface-container-highest);
+  border-radius: 999px;
+}
+
+/* ---------- omnibox popovers (bookmark editor, site info) ---------- */
+popover.info-popover > contents {
+  padding: 20px;
+}
+.bookmark-editor {
+  min-width: 300px;
+}
+.popover-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+.field-label {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+popover.site-info-pop > contents {
+  padding: 16px 12px 12px 12px;
+  min-width: 340px;
+}
+.section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--on-surface-variant);
+  margin-top: 4px;
+}
+/* Segmented list: one rounded container per item, large outer corners. */
+.info-group > * {
+  background: var(--surface-container-high);
+  border-radius: 6px;
+}
+.info-group > *:first-child {
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+}
+.info-group > *:last-child {
+  border-bottom-left-radius: 20px;
+  border-bottom-right-radius: 20px;
+}
+.info-row {
+  padding: 12px 16px 12px 12px;
+}
+button.info-row-btn {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  transition: background-color 150ms;
+}
+button.info-row-btn:hover {
+  background: var(--surface-container-highest);
+}
+.info-icon {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 999px;
+  -gtk-icon-size: 20px;
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+.info-icon.good {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+.info-icon.bad {
+  background: color-mix(in srgb, var(--error) 16%, var(--surface-container-high));
+  color: var(--error);
+}
+.row-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+.row-sub,
+.row-overline {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+.row-mono {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--on-surface);
+}
+.row-chevron {
+  color: var(--on-surface-variant);
+}
+.state-on {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+}
+.state-off {
+  font-size: 13px;
+  color: var(--on-surface-variant);
+}
+entry.field {
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--outline);
+  background: none;
+  box-shadow: none;
+  color: var(--on-surface);
+  padding: 0 12px;
+}
+entry.field:focus-within {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+button.filled {
+  min-height: 40px;
+  padding: 0 24px;
+  border-radius: 999px;
+  border: none;
+  box-shadow: none;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+  transition: border-radius 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+button.filled:active {
+  border-radius: 12px;
+}
+button.text-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: none;
+  box-shadow: none;
+  background: none;
+  color: var(--primary);
+  font-weight: 600;
+}
+button.text-btn:hover {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}

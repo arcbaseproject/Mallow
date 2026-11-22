@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Mallow: five-petal mallow flower in the default lavender palette -->
+  <g fill="#7F67BE">
+    <circle cx="128" cy="76" r="50"/>
+    <circle cx="177.5" cy="112" r="50"/>
+    <circle cx="158.6" cy="170.1" r="50"/>
+    <circle cx="97.4" cy="170.1" r="50"/>
+    <circle cx="78.5" cy="112" r="50"/>
+  </g>
+  <g fill="none" stroke="#6750A4" stroke-width="5" stroke-linecap="round" opacity="0.55">
+    <path d="M128 128V58"/>
+    <path d="M128 128L194.6 106.4"/>
+    <path d="M128 128L169.1 184.6"/>
+    <path d="M128 128L86.9 184.6"/>
+    <path d="M128 128L61.4 106.4"/>
+  </g>
+  <circle cx="128" cy="128" r="30" fill="#FFD8E4"/>
+  <circle cx="128" cy="128" r="12" fill="#7D5260"/>
+</svg>
