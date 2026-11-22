@@ -14,6 +14,14 @@ It sends nothing home: no telemetry, no accounts, no sync, no background service
 
 Mallow runs on Linux. It needs GTK 4.20 or later and WebKitGTK 6.0 2.50 or later. It has no macOS or Windows builds, because WebKitGTK only supports Linux and BSD.
 
+### Installer
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/arcbaseproject/Mallow/main/install.sh | sh
+```
+
+The installer suggests the package that suits your distribution and checks the download against the release's checksums. It asks before running anything with `sudo`, and it can install into `~/.local` without `sudo`. To pin a version, run `MALLOW_TAG=v0.1.0 sh install.sh`. You can [read the script](install.sh) before you run it.
+
 ### Packages
 
 Each [GitHub release](https://github.com/arcbaseproject/Mallow/releases) has builds for x86_64:
