@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/arcbaseproject/Mallow/main/install.sh | sh
 #
-# It picks the latest release (or MALLOW_TAG, e.g. MALLOW_TAG=v0.1.0), offers
+# It picks the newest release, pre-releases included (or MALLOW_TAG, e.g. MALLOW_TAG=v0.1.0), offers
 # the .deb, .rpm or tarball that suits this system, checks the download against
 # the release's SHA256SUMS, and asks before anything runs with sudo.
 set -eu
@@ -39,7 +39,7 @@ done
 # Release
 tag="${MALLOW_TAG:-}"
 if [ -z "$tag" ]; then
-    tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
+    tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=1" |
         sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1) ||
         die "could not reach GitHub to find the latest release."
     [ -n "$tag" ] || die "no published release found at https://github.com/$REPO/releases"
