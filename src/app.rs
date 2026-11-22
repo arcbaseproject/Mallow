@@ -1,6 +1,7 @@
 use crate::{
-    config::{self, Config, Cookies, Session, Startup, Theme},
+    config::{self, Config, Session, Startup, Theme},
     downloads::Downloads,
+    engine::{self, DataKinds, Engine, LoadEvent},
     store::Store,
     theme, util,
     window::Window,
@@ -10,7 +11,6 @@ use std::{
     cell::{OnceCell, RefCell},
     rc::Rc,
 };
-use webkit6::{NetworkSession, prelude::*};
 
 pub const APP_ID: &str = "dev.mallow.Browser";
 
@@ -24,12 +24,11 @@ pub struct App {
     pub quitting: std::cell::Cell<bool>,
     /// The start-up update check runs once per process.
     update_checked: std::cell::Cell<bool>,
-    /// Shared by every view so the content filter is compiled once.
-    pub content: webkit6::UserContentManager,
-    pub settings: webkit6::Settings,
+    /// Engine state shared by every view (preferences, tracker filter).
+    pub engine: Engine,
     pub downloads: Rc<Downloads>,
     store: OnceCell<Option<Store>>,
-    session: OnceCell<NetworkSession>,
+    session: OnceCell<engine::Session>,
     windows: RefCell<Vec<Rc<Window>>>,
     tokens: gtk::CssProvider,
 }
@@ -100,8 +99,6 @@ impl App {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
 
-        let settings = webkit6::Settings::new();
-        settings.set_enable_developer_extras(true);
         let (config, config_problem) = Config::load();
         if let Some(s) = gtk::Settings::default() {
             // GTK's automatic (unhinted) text rendering clips the tops of
@@ -118,8 +115,7 @@ impl App {
             quitting: Default::default(),
             passwords: Default::default(),
             update_checked: Default::default(),
-            content: webkit6::UserContentManager::new(),
-            settings,
+            engine: Engine::new(),
             downloads: Rc::default(),
             store: OnceCell::new(),
             session: OnceCell::new(),
@@ -228,39 +224,14 @@ impl App {
         self.config.borrow().save();
     }
 
-    /// Engine-wide preferences on the shared WebKit objects.
+    /// Engine-wide preferences.
     pub fn apply_engine(&self) {
-        let cfg = self.config.borrow();
-        self.settings
-            .set_hardware_acceleration_policy(if cfg.hardware_acceleration {
-                webkit6::HardwareAccelerationPolicy::Always
-            } else {
-                webkit6::HardwareAccelerationPolicy::Never
-            });
-        self.settings.set_enable_smooth_scrolling(cfg.smooth_scrolling);
-        self.settings.set_enable_webgl(cfg.webgl);
-        self.settings.set_enable_page_cache(cfg.page_cache);
-        if let Some(ctx) = webkit6::WebContext::default() {
-            ctx.set_cache_model(if cfg.low_memory {
-                webkit6::CacheModel::DocumentViewer
-            } else {
-                webkit6::CacheModel::WebBrowser
-            });
-            let langs = config::parse_languages(&cfg.languages).unwrap_or_default();
-            if !langs.is_empty() {
-                ctx.set_preferred_languages(&langs.iter().map(String::as_str).collect::<Vec<_>>());
-            }
-            ctx.set_spell_checking_enabled(cfg.spellcheck);
-            let dicts = config::parse_dictionaries(&cfg.spell_languages).unwrap_or_default();
-            if cfg.spellcheck && !dicts.is_empty() {
-                ctx.set_spell_checking_languages(&dicts.iter().map(String::as_str).collect::<Vec<_>>());
-            }
-        }
+        self.engine.apply(&self.config.borrow());
     }
 
     /// Cookie policy and tracking prevention on every live network session.
     pub fn apply_network(&self) {
-        let sessions: Vec<NetworkSession> = self
+        let sessions: Vec<engine::Session> = self
             .session
             .get()
             .cloned()
@@ -268,19 +239,7 @@ impl App {
             .chain(self.windows.borrow().iter().filter_map(|w| w.live_session()))
             .collect();
         for s in sessions {
-            self.configure_policies(&s);
-        }
-    }
-
-    fn configure_policies(&self, s: &NetworkSession) {
-        let cfg = self.config.borrow();
-        s.set_itp_enabled(cfg.itp);
-        if let Some(cm) = s.cookie_manager() {
-            cm.set_accept_policy(match cfg.cookies {
-                Cookies::NoThirdParty => webkit6::CookieAcceptPolicy::NoThirdParty,
-                Cookies::Always => webkit6::CookieAcceptPolicy::Always,
-                Cookies::Never => webkit6::CookieAcceptPolicy::Never,
-            });
+            s.apply(&self.config.borrow());
         }
     }
 
@@ -289,7 +248,7 @@ impl App {
         if on {
             self.load_content_filter();
         } else {
-            self.content.remove_all_filters();
+            self.engine.clear_block_rules();
         }
     }
 
@@ -335,19 +294,8 @@ impl App {
         let custom = config::config_dir().join("blocklist.txt");
         let list = std::fs::read_to_string(&custom)
             .unwrap_or_else(|_| include_str!("../assets/blocklist.txt").into());
-        let rules = util::block_rules(&list);
-        let dir = config::cache_dir().join("filters");
-        let store = webkit6::UserContentFilterStore::new(&dir.to_string_lossy());
-        let content = self.content.clone();
-        store.save(
-            "mallow-trackers",
-            &glib::Bytes::from_owned(rules),
-            None::<&gio::Cancellable>,
-            move |r| match r {
-                Ok(filter) => content.add_filter(&filter),
-                Err(e) => eprintln!("mallow: content filter failed to compile: {e}"),
-            },
-        );
+        self.engine
+            .set_block_rules(util::block_rules(&list), &config::cache_dir().join("filters"));
     }
 
     /// History/bookmarks database, opened on first use.
@@ -363,71 +311,56 @@ impl App {
 
     /// Persistent session for normal windows, a fresh in-memory one for each
     /// private window.
-    pub fn network_session(self: &Rc<Self>, private_downloads: Option<&Rc<Downloads>>) -> NetworkSession {
+    pub fn network_session(self: &Rc<Self>, private_downloads: Option<&Rc<Downloads>>) -> engine::Session {
         if let Some(downloads) = private_downloads {
-            return self.configure_session(NetworkSession::new_ephemeral(), downloads);
+            return self.configure_session(engine::Session::ephemeral(), downloads);
         }
         self.session
             .get_or_init(|| {
-                let data = config::data_dir().join("web");
-                let cache = config::cache_dir().join("web");
-                let s = NetworkSession::new(Some(&data.to_string_lossy()), Some(&cache.to_string_lossy()));
-                if let Some(cm) = s.cookie_manager() {
-                    cm.set_persistent_storage(
-                        &data.join("cookies.sqlite").to_string_lossy(),
-                        webkit6::CookiePersistentStorage::Sqlite,
-                    );
-                }
+                let s = engine::Session::persistent(
+                    &config::data_dir().join("web"),
+                    &config::cache_dir().join("web"),
+                );
                 self.configure_session(s, &self.downloads)
             })
             .clone()
     }
 
-    fn configure_session(self: &Rc<Self>, s: NetworkSession, downloads: &Rc<Downloads>) -> NetworkSession {
-        if let Some(dm) = s.website_data_manager() {
-            dm.set_favicons_enabled(true);
-        }
-        self.configure_policies(&s);
+    fn configure_session(self: &Rc<Self>, s: engine::Session, downloads: &Rc<Downloads>) -> engine::Session {
+        s.apply(&self.config.borrow());
         let weak = Rc::downgrade(self);
         let downloads = Rc::downgrade(downloads);
-        s.connect_download_started(move |_, dl| {
+        s.connect_download(move |dl| {
             let Some(app) = weak.upgrade() else { return };
             let Some(downloads) = downloads.upgrade() else {
                 return;
             };
-            let parent = dl
-                .web_view()
-                .and_then(|view| view.root())
+            let view = dl.view();
+            let parent = view
+                .as_ref()
+                .and_then(|v| v.widget().root())
                 .and_downcast::<gtk::Window>();
-            downloads.track(parent.as_ref(), dl, app.config.borrow().download_dir());
+            downloads.track(parent.as_ref(), &dl, app.config.borrow().download_dir());
             // A tab opened only to fetch a file has nothing to show; close it
             // once the transfer ends (closing earlier would cancel it).
-            let Some(view) = dl.web_view() else { return };
-            if view.back_forward_list().and_then(|l| l.current_item()).is_none() {
-                let close = {
-                    let navigated = Rc::new(std::cell::Cell::new(false));
-                    let flag = navigated.clone();
-                    let handler = view.connect_load_changed(move |_, event| {
-                        if event == webkit6::LoadEvent::Started {
-                            flag.set(true);
-                        }
-                    });
-                    let (app, view) = (Rc::downgrade(&app), view.downgrade());
-                    move || {
-                        if let (Some(app), Some(view)) = (app.upgrade(), view.upgrade()) {
-                            view.disconnect(handler);
-                            if !navigated.get()
-                                && view.back_forward_list().and_then(|l| l.current_item()).is_none()
-                            {
-                                app.close_view(&view);
-                            }
-                        }
+            let Some(view) = view else { return };
+            if !view.has_history() {
+                let navigated = Rc::new(std::cell::Cell::new(false));
+                let flag = navigated.clone();
+                let handler = std::cell::Cell::new(Some(view.connect_load(move |_, event| {
+                    if event == LoadEvent::Started {
+                        flag.set(true);
                     }
-                };
-                let close = std::cell::Cell::new(Some(close));
-                dl.connect_finished(move |_| {
-                    if let Some(close) = close.take() {
-                        close();
+                })));
+                let (app, weak_view) = (Rc::downgrade(&app), view.downgrade());
+                dl.connect_end(move |_, _| {
+                    if let (Some(app), Some(view), Some(h)) =
+                        (app.upgrade(), weak_view.upgrade(), handler.take())
+                    {
+                        view.disconnect(h);
+                        if !navigated.get() && !view.has_history() {
+                            app.close_view(&view);
+                        }
                     }
                 });
             }
@@ -437,32 +370,16 @@ impl App {
 
     /// Clears history plus cookies, cache and site storage of normal windows.
     pub fn clear_browsing_data(self: &Rc<Self>) {
-        self.clear_data(true, webkit6::WebsiteDataTypes::all());
+        self.clear_data(true, DataKinds::ALL);
     }
 
-    /// Clear history (optionally) and the given WebKit data of normal windows.
-    pub fn clear_data(self: &Rc<Self>, history: bool, types: webkit6::WebsiteDataTypes) {
+    /// Clear history (optionally) and the given site data of normal windows.
+    pub fn clear_data(self: &Rc<Self>, history: bool, kinds: DataKinds) {
         if history && let Some(store) = self.store() {
             store.clear_history();
         }
-        if types.is_empty() {
-            return;
-        }
-        if let Some(dm) = self.network_session(None).website_data_manager() {
-            let all = types == webkit6::WebsiteDataTypes::all();
-            dm.clear(
-                types,
-                glib::TimeSpan::from_seconds(0),
-                None::<&gio::Cancellable>,
-                |r| {
-                    if let Err(e) = r {
-                        eprintln!("mallow: clearing site data failed: {e}");
-                    }
-                },
-            );
-            if all && let Some(fav) = dm.favicon_database() {
-                fav.clear();
-            }
+        if kinds != DataKinds::NONE {
+            self.network_session(None).clear(kinds);
         }
     }
 
@@ -484,17 +401,11 @@ impl App {
         if !(url.starts_with("https://") || url.starts_with("http://")) {
             return avatar;
         }
-        let Some(db) = self
-            .network_session(None)
-            .website_data_manager()
-            .and_then(|dm| dm.favicon_database())
-        else {
-            return avatar;
-        };
+        let session = self.network_session(None);
         let (weak, url) = (avatar.downgrade(), url.to_string());
         glib::spawn_future_local(async move {
             // No icon recorded yet is the common case; keep the letter.
-            let Ok(texture) = db.favicon_future(&url).await else {
+            let Some(texture) = session.favicon(&url).await else {
                 return;
             };
             let Some(avatar) = weak.upgrade() else { return };
@@ -514,7 +425,7 @@ impl App {
         avatar
     }
 
-    fn close_view(&self, view: &webkit6::WebView) {
+    fn close_view(&self, view: &engine::View) {
         let windows = self.windows.borrow().clone();
         for w in windows {
             if w.close_view(view) {

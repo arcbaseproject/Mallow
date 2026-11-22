@@ -221,18 +221,13 @@ fn suggestion_row(app: &Rc<App>, url: &str, title: &str) -> gtk::ListBoxRow {
     }
     let icon = gtk::Image::from_icon_name("m-public-symbolic");
     icon.add_css_class("suggest-icon");
-    if let Some(db) = app
-        .network_session(None)
-        .website_data_manager()
-        .and_then(|dm| dm.favicon_database())
-    {
-        let (weak, url) = (icon.downgrade(), url.to_string());
-        glib::spawn_future_local(async move {
-            if let (Ok(texture), Some(icon)) = (db.favicon_future(&url).await, weak.upgrade()) {
-                icon.set_paintable(Some(&texture));
-            }
-        });
-    }
+    let session = app.network_session(None);
+    let (weak, page) = (icon.downgrade(), url.to_string());
+    glib::spawn_future_local(async move {
+        if let (Some(texture), Some(icon)) = (session.favicon(&page).await, weak.upgrade()) {
+            icon.set_paintable(Some(&texture));
+        }
+    });
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     line.append(&icon);
     line.append(&b);

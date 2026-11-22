@@ -7,6 +7,7 @@
 use crate::{
     app::App,
     config::{self, Ask, Cookies, NewTab, Startup, Theme},
+    engine::DataKinds,
     theme,
     window::Window,
 };
@@ -990,57 +991,60 @@ fn privacy(ctx: &Ctx) -> gtk::Widget {
     let cfg = ctx.app.config.borrow().clone();
 
     let group = card(&page, "Clear browsing data");
-    let clear =
-        |title: &str, sub: &str, history: bool, types: webkit6::WebsiteDataTypes, what: &'static str| {
-            let b = button("Clear", "tonal-btn");
-            let r = row(&group, title, Some(sub), Some(b.upcast_ref()));
-            r.set_widget_name(what);
-            let ctx2 = ctx.clone();
-            b.connect_clicked(move |b| {
-                let (app, b2) = (ctx2.app.clone(), b.downgrade());
-                confirm(
-                    &ctx2,
-                    &format!("Clear {what}?"),
-                    "This can't be undone.",
-                    "Clear",
-                    move || {
-                        app.clear_data(history, types);
-                        if let Some(b) = b2.upgrade() {
-                            b.set_label("Cleared");
-                            b.set_sensitive(false);
-                        }
-                    },
-                );
-            });
-        };
+    let clear = |title: &str, sub: &str, history: bool, types: DataKinds, what: &'static str| {
+        let b = button("Clear", "tonal-btn");
+        let r = row(&group, title, Some(sub), Some(b.upcast_ref()));
+        r.set_widget_name(what);
+        let ctx2 = ctx.clone();
+        b.connect_clicked(move |b| {
+            let (app, b2) = (ctx2.app.clone(), b.downgrade());
+            confirm(
+                &ctx2,
+                &format!("Clear {what}?"),
+                "This can't be undone.",
+                "Clear",
+                move || {
+                    app.clear_data(history, types);
+                    if let Some(b) = b2.upgrade() {
+                        b.set_label("Cleared");
+                        b.set_sensitive(false);
+                    }
+                },
+            );
+        });
+    };
     clear(
         "History",
         "Pages you visited. Bookmarks stay.",
         true,
-        webkit6::WebsiteDataTypes::empty(),
+        DataKinds::NONE,
         "your history",
     );
     clear(
         "Cookies and site data",
         "Signs you out of most websites",
         false,
-        webkit6::WebsiteDataTypes::all()
-            - webkit6::WebsiteDataTypes::MEMORY_CACHE
-            - webkit6::WebsiteDataTypes::DISK_CACHE,
+        DataKinds {
+            site_data: true,
+            cache: false,
+        },
         "cookies and site data",
     );
     clear(
         "Cached files",
         "Copies of pages and images that make sites load faster",
         false,
-        webkit6::WebsiteDataTypes::MEMORY_CACHE | webkit6::WebsiteDataTypes::DISK_CACHE,
+        DataKinds {
+            site_data: false,
+            cache: true,
+        },
         "cached files",
     );
     clear(
         "Everything",
         "History, cookies, site data and cache",
         true,
-        webkit6::WebsiteDataTypes::all(),
+        DataKinds::ALL,
         "all browsing data",
     );
 
@@ -1287,12 +1291,7 @@ fn performance(ctx: &Ctx) -> gtk::Widget {
         l.set_selectable(true);
         l
     };
-    let webkit = format!(
-        "{}.{}.{}",
-        webkit6::functions::major_version(),
-        webkit6::functions::minor_version(),
-        webkit6::functions::micro_version()
-    );
+    let webkit = crate::engine::version();
     let gtk_v = format!(
         "{}.{}.{}",
         gtk::major_version(),
@@ -1305,7 +1304,12 @@ fn performance(ctx: &Ctx) -> gtk::Widget {
         None,
         Some(value(env!("CARGO_PKG_VERSION")).upcast_ref()),
     );
-    row(&group, "WebKitGTK", None, Some(value(&webkit).upcast_ref()));
+    row(
+        &group,
+        crate::engine::NAME,
+        None,
+        Some(value(&webkit).upcast_ref()),
+    );
     row(&group, "GTK", None, Some(value(&gtk_v).upcast_ref()));
     let tabs = value(&ctx.app.tab_count().to_string());
     row(
@@ -1557,12 +1561,7 @@ fn about(ctx: &Ctx) -> gtk::Widget {
     page.append(&hero);
 
     let group = card(&page, "Built with");
-    let webkit = format!(
-        "{}.{}.{}",
-        webkit6::functions::major_version(),
-        webkit6::functions::minor_version(),
-        webkit6::functions::micro_version()
-    );
+    let webkit = crate::engine::version();
     let gtk_v = format!(
         "{}.{}.{}",
         gtk::major_version(),
@@ -1571,7 +1570,7 @@ fn about(ctx: &Ctx) -> gtk::Widget {
     );
     row(
         &group,
-        "WebKitGTK",
+        crate::engine::NAME,
         Some(&format!(
             "Web engine, version {webkit}. Updated by your system's package manager."
         )),

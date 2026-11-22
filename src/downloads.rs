@@ -1,10 +1,10 @@
 //! Downloads land in the XDG download folder under a sanitized, unique name.
 //! Files are never opened or executed; the UI only offers "Show in folder".
 
+use crate::engine::{Download, DownloadEnd};
 use crate::util;
 use gtk::{gio, glib, prelude::*};
 use std::cell::OnceCell;
-use webkit6::Download;
 
 #[derive(Default)]
 pub struct Downloads {
@@ -44,14 +44,11 @@ impl Downloads {
 
     /// `dir` is the folder chosen in Settings at the time the download starts.
     pub fn track(&self, parent: Option<&gtk::Window>, dl: &Download, dir: std::path::PathBuf) {
-        dl.connect_decide_destination(move |dl, suggested| {
+        dl.connect_destination(move |suggested| {
             if let Err(e) = std::fs::create_dir_all(&dir) {
                 eprintln!("mallow: cannot create {}: {e}", dir.display());
             }
-            let path = util::unique_path(&dir, &util::sanitize_filename(suggested));
-            dl.set_allow_overwrite(false);
-            dl.set_destination(&path.to_string_lossy());
-            true
+            util::unique_path(&dir, &util::sanitize_filename(suggested))
         });
 
         let name = gtk::Label::builder()
@@ -59,12 +56,7 @@ impl Downloads {
             .ellipsize(gtk::pango::EllipsizeMode::Middle)
             .build();
         name.add_css_class("heading");
-        name.set_text(
-            dl.request()
-                .and_then(|r| r.uri())
-                .as_deref()
-                .map_or("download", util::host),
-        );
+        name.set_text(dl.source().as_deref().map_or("download", util::host));
         let bar = gtk::ProgressBar::new();
         let status = gtk::Label::builder().xalign(0.0).label("Starting…").build();
         status.add_css_class("dim-label");
@@ -87,67 +79,54 @@ impl Downloads {
             let dl = dl.clone();
             move |_| dl.cancel()
         });
-        dl.connect_created_destination({
+        dl.connect_created({
             let name = name.clone();
-            move |_, dest| {
-                let file = std::path::Path::new(dest)
-                    .file_name()
-                    .map(|f| f.to_string_lossy().into_owned());
-                name.set_text(file.as_deref().unwrap_or(dest));
+            move |dest| {
+                name.set_text(&dest.file_name().unwrap_or(dest.as_os_str()).to_string_lossy());
             }
         });
-        dl.connect_received_data({
+        dl.connect_progress({
             let (bar, status) = (bar.clone(), status.clone());
-            move |dl, _| {
-                bar.set_fraction(dl.estimated_progress());
-                status.set_text(&format!(
-                    "{} received",
-                    glib::format_size(dl.received_data_length())
-                ));
+            move |fraction, bytes| {
+                bar.set_fraction(fraction);
+                status.set_text(&format!("{} received", glib::format_size(bytes)));
             }
         });
         let cancel = std::cell::Cell::new(Some(cancel));
-        dl.connect_finished({
-            let (bar, status, action, row) = (bar.clone(), status.clone(), action.clone(), row.clone());
-            move |dl| {
-                row.add_css_class("finished");
-                // `failed` fires before `finished` on error; keep its message.
-                if status.has_css_class("error") {
-                    if let Some(id) = cancel.take() {
-                        action.disconnect(id);
-                    }
-                    action.set_visible(false);
-                    return;
-                }
-                bar.set_fraction(1.0);
-                status.set_text(&format!(
-                    "Done · {}",
-                    glib::format_size(dl.received_data_length())
-                ));
-                if let Some(id) = cancel.take() {
-                    action.disconnect(id);
-                }
-                action.set_label("Show in folder");
-                let dest = dl.destination();
-                action.connect_clicked(move |b| {
-                    let Some(dest) = dest.as_deref() else { return };
-                    let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(dest)));
-                    let win = b.root().and_downcast::<gtk::Window>();
-                    launcher.open_containing_folder(win.as_ref(), None::<&gio::Cancellable>, |r| {
-                        if let Err(e) = r {
-                            eprintln!("mallow: cannot open folder: {e}");
-                        }
-                    });
-                });
+        dl.connect_end(move |finished, end| {
+            row.add_css_class("finished");
+            if let Some(id) = cancel.take() {
+                action.disconnect(id);
             }
-        });
-        dl.connect_failed(move |_, err| {
-            status.add_css_class("error");
-            status.set_text(&if err.matches(webkit6::DownloadError::CancelledByUser) {
-                "Cancelled".to_string()
-            } else {
-                format!("Failed: {}", err.message())
-            });
+            match end {
+                DownloadEnd::Cancelled | DownloadEnd::Failed(_) => {
+                    status.add_css_class("error");
+                    status.set_text(&match end {
+                        DownloadEnd::Failed(msg) => format!("Failed: {msg}"),
+                        _ => "Cancelled".to_string(),
+                    });
+                    action.set_visible(false);
+                }
+                DownloadEnd::Done => {
+                    bar.set_fraction(1.0);
+                    status.set_text(&format!(
+                        "Done · {}",
+                        glib::format_size(finished.received_bytes())
+                    ));
+                    action.set_label("Show in folder");
+                    let dest = finished.destination();
+                    action.connect_clicked(move |b| {
+                        let Some(dest) = dest.as_deref() else { return };
+                        let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(dest)));
+                        let win = b.root().and_downcast::<gtk::Window>();
+                        launcher.open_containing_folder(win.as_ref(), None::<&gio::Cancellable>, |r| {
+                            if let Err(e) = r {
+                                eprintln!("mallow: cannot open folder: {e}");
+                            }
+                        });
+                    });
+                }
+            }
         });
     }
 

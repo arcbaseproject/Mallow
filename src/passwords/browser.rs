@@ -1,9 +1,10 @@
 //! No page-world bridge. Each view has its own channel in a named script world.
 use super::*;
+use crate::engine::{LoadEvent, View, WeakView};
 use crate::window::{Tab, Window};
 use rand::{RngCore, rngs::OsRng};
 use serde::Deserialize;
-use webkit6::{LoadEvent, WebView, prelude::*};
+use serde_json::json;
 
 const WORLD: &str = "dev.mallow.passwords.v1";
 #[derive(Deserialize)]
@@ -24,9 +25,8 @@ impl Drop for Event {
         self.pass.zeroize();
     }
 }
-fn trusted_origin(view: &WebView) -> Option<String> {
-    let (_, errors) = view.tls_info()?;
-    if !errors.is_empty() || view.is_loading() {
+fn trusted_origin(view: &View) -> Option<String> {
+    if view.certificate()?.problems.is_some() || view.is_loading() {
         return None;
     }
     origin(&view.uri()?)
@@ -47,7 +47,7 @@ fn allowed(private: bool, expected: &str, live: Option<&str>, token: &str, recei
 struct Bridge {
     window: std::rc::Weak<Window>,
     tab: std::rc::Weak<Tab>,
-    view: glib::WeakRef<WebView>,
+    view: WeakView,
     token: RefCell<String>,
     channel: String,
     offer: RefCell<Option<(gtk::Button, glib::SignalHandlerId)>>,
@@ -85,7 +85,7 @@ impl Bridge {
             }
         }
     }
-    fn current(&self, event: &Event) -> Option<(Rc<Window>, WebView)> {
+    fn current(&self, event: &Event) -> Option<(Rc<Window>, View)> {
         let w = self.window.upgrade()?;
         let t = self.tab.upgrade()?;
         let v = self.view.upgrade()?;
@@ -113,32 +113,23 @@ impl Bridge {
         let save = p.save && !p.excluded.contains(&origin);
         if !save && !p.fill {
             // Nothing to offer: detach listeners from an earlier install and skip injection.
-            v.call_async_javascript_function(
+            v.run_script(
                 "globalThis.mallowAbort?.abort(); delete globalThis.mallowFill;",
-                None,
+                json!({}),
                 Some(WORLD),
-                None,
-                None::<&gio::Cancellable>,
-                |_| {},
             );
             return;
         }
-        let args = glib::VariantDict::new(None);
         let token = nonce();
-        args.insert("expected", origin);
-        args.insert("token", token.clone());
-        args.insert("channel", self.channel.clone());
-        args.insert("saveEnabled", i32::from(save));
-        args.insert("fillEnabled", i32::from(p.fill));
+        let args = json!({
+            "expected": origin,
+            "token": token,
+            "channel": self.channel,
+            "saveEnabled": i32::from(save),
+            "fillEnabled": i32::from(p.fill),
+        });
         self.token.replace(token);
-        v.call_async_javascript_function(
-            include_str!("forms.js"),
-            Some(&args.end()),
-            Some(WORLD),
-            None,
-            None::<&gio::Cancellable>,
-            |_| {},
-        );
+        v.run_script(include_str!("forms.js"), args, Some(WORLD));
     }
     fn receive(self: &Rc<Self>, event: Event) {
         let Some((w, _)) = self.current(&event) else {
@@ -234,23 +225,23 @@ impl Bridge {
         if !w.app.config.borrow().passwords.fill {
             return Ok(());
         }
-        let args = glib::VariantDict::new(None);
-        args.insert("token", event.token.as_str());
-        args.insert("id", event.id.as_str());
-        args.insert("origin", event.origin.as_str());
-        args.insert("user", name);
-        args.insert("password", pass.as_str());
-        args.insert("generate", i32::from(generate));
+        let args = json!({
+            "token": event.token,
+            "id": event.id,
+            "origin": event.origin,
+            "user": name,
+            "password": pass.as_str(),
+            "generate": i32::from(generate),
+        });
         let filled = view
-            .call_async_javascript_function_future(
+            .call_script(
                 "return globalThis.mallowFill?.(token,id,origin,user,password,Boolean(generate)) === true;",
-                Some(&args.end()),
+                &args,
                 Some(WORLD),
-                None,
             )
             .await
             .map_err(|_| "The form changed.")?;
-        if !filled.to_boolean() {
+        if filled != serde_json::Value::Bool(true) {
             return Err("The form changed. Select the field again.");
         }
         Ok(())
@@ -336,17 +327,11 @@ async fn save(app: &Rc<App>, parent: &gtk::Window, mut e: Event) -> Result<()> {
     }
     access(app, move |v| v.put(&origin, &user, &pass)).await
 }
-pub fn attach(w: &Rc<Window>, tab: &Rc<Tab>, view: &WebView) {
+pub fn attach(w: &Rc<Window>, tab: &Rc<Tab>, view: &View) {
     if w.private {
         return;
     }
-    let Some(manager) = view.user_content_manager() else {
-        return;
-    };
     let channel = format!("mallow{}", nonce());
-    if !manager.register_script_message_handler(&channel, Some(WORLD)) {
-        return;
-    }
     let bridge = Rc::new(Bridge {
         window: Rc::downgrade(w),
         tab: Rc::downgrade(tab),
@@ -357,19 +342,18 @@ pub fn attach(w: &Rc<Window>, tab: &Rc<Tab>, view: &WebView) {
         candidate: Default::default(),
     });
     let b = bridge.clone();
-    let signal = manager.connect_script_message_received(Some(&channel), move |_, value| {
-        if !value.is_string() {
-            return;
-        }
-        let raw = Secret::new(value.to_str().to_string());
+    let Some(signal) = view.add_script_handler(WORLD, &channel, move |raw| {
+        let raw = Secret::new(raw.to_string());
         if raw.len() <= 40_000
             && let Ok(event) = serde_json::from_str(&raw)
         {
             b.receive(event);
         }
-    });
+    }) else {
+        return;
+    };
     let b = bridge.clone();
-    view.connect_load_changed(move |_, ev| match ev {
+    view.connect_load(move |_, ev| match ev {
         LoadEvent::Finished => b.install(),
         LoadEvent::Committed => {
             b.flush_candidate();
@@ -381,7 +365,7 @@ pub fn attach(w: &Rc<Window>, tab: &Rc<Tab>, view: &WebView) {
     let b = bridge.clone();
     let update = policy.connect_activate(move |_, _| b.install());
     let b = bridge.clone();
-    view.connect_uri_notify(move |v| {
+    view.connect_uri(move |v| {
         // Same-document navigation (pushState) after a script-driven login.
         b.flush_candidate();
         if v.is_loading() {
@@ -391,16 +375,18 @@ pub fn attach(w: &Rc<Window>, tab: &Rc<Tab>, view: &WebView) {
         }
     });
     let b = bridge.clone();
-    view.connect_is_loading_notify(move |v| {
+    view.connect_loading(move |v| {
         if !v.is_loading() && b.token.borrow().is_empty() {
             b.install();
         }
     });
-    view.add_weak_ref_notify_local(move || {
+    let weak = view.downgrade();
+    view.on_destroy(move || {
         bridge.dismiss();
         policy.disconnect(update);
-        manager.disconnect(signal);
-        manager.unregister_script_message_handler(&channel, Some(WORLD));
+        if let Some(v) = weak.upgrade() {
+            v.remove_script_handler(WORLD, &channel, signal);
+        }
     });
 }
 #[cfg(test)]
@@ -428,26 +414,42 @@ mod tests {
 mod webkit_tests {
     use super::*;
     #[test]
-    #[ignore = "requires a GTK display and a sandbox-capable WebKit runtime"]
+    #[ignore = "requires a display and a sandbox-capable engine runtime"]
     fn synthetic_forms_in_webkit() {
         gtk::init().unwrap();
         glib::MainContext::default().block_on(async {
-            let session=webkit6::NetworkSession::new_ephemeral();
-            let view=WebView::builder().network_session(&session).build();
-            let win=gtk::Window::builder().child(&view).build();win.present();
-            let (tx,rx)=futures_channel::oneshot::channel();
-            let tx=Cell::new(Some(tx));
-            view.connect_load_changed(move|_,ev|if ev==LoadEvent::Finished && let Some(tx)=tx.take(){let _=tx.send(());});
-            view.load_html(r#"<form method="post"><input autocomplete="username"><input type="password" autocomplete="current-password"></form><iframe srcdoc="<input type=password>"></iframe>"#,Some("https://synthetic.test/"));
+            let view = View::standalone();
+            let win = gtk::Window::builder().child(&view.widget()).build();
+            win.present();
+            let (tx, rx) = futures_channel::oneshot::channel();
+            let tx = Cell::new(Some(tx));
+            view.connect_load(move |_, ev| {
+                if ev == LoadEvent::Finished
+                    && let Some(tx) = tx.take()
+                {
+                    let _ = tx.send(());
+                }
+            });
+            view.load_html(
+                r#"<form method="post"><input autocomplete="username"><input type="password" autocomplete="current-password"></form><iframe srcdoc="<input type=password>"></iframe>"#,
+                Some("https://synthetic.test/"),
+            );
             rx.await.unwrap();
-            let manager=view.user_content_manager().unwrap();
-            assert!(manager.register_script_message_handler("testForms",Some(WORLD)));
-            let args=glib::VariantDict::new(None);
-            for (k,v) in [("channel","testForms"),("expected","https://synthetic.test"),("token","document-one")]{args.insert(k,v)}
-            args.insert("fillEnabled",1);args.insert("saveEnabled",1);
-            let installed=view.call_async_javascript_function_future(include_str!("forms.js"),Some(&args.end()),Some(WORLD),None).await.unwrap();assert!(installed.to_boolean());
-            let page=view.call_async_javascript_function_future("return typeof globalThis.mallowFill === 'undefined' && !window.webkit?.messageHandlers?.testForms;",None,None,None).await.unwrap();assert!(page.to_boolean());
-            let results=view.call_async_javascript_function_future(r#"
+            assert!(view.add_script_handler(WORLD, "testForms", |_| {}).is_some());
+            let args = json!({"channel": "testForms", "expected": "https://synthetic.test",
+                "token": "document-one", "fillEnabled": 1, "saveEnabled": 1});
+            let installed = view.call_script(include_str!("forms.js"), &args, Some(WORLD)).await.unwrap();
+            assert_eq!(installed, json!(true));
+            let page = view
+                .call_script(
+                    "return typeof globalThis.mallowFill === 'undefined' && !window.webkit?.messageHandlers?.testForms;",
+                    &json!({}),
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(page, json!(true));
+            let results = view.call_script(r#"
                 const form=document.forms[0], [user,pass]=form.elements;
                 const fill=(id,origin,token,gen=false)=>globalThis.mallowFill(token,id,origin,"synthetic","test-password",gen);
                 user.focus(); const ok=fill("1",location.origin,"document-one") && pass.value==="test-password";
@@ -461,8 +463,8 @@ mod webkit_tests {
                 const extra=document.createElement("form");extra.method="post";extra.innerHTML='<input type=password autocomplete="one-time-code">';
                 document.body.append(extra);extra.firstChild.focus();const unrelated=!fill("6",location.origin,"document-one");
                 return [ok,denied,stale,changed,generated,iframeSafe,unrelated].map(Number).join("");
-            "#,None,Some(WORLD),None).await.unwrap();
-            assert_eq!(results.to_str().as_str(),"1111111");
+            "#, &json!({}), Some(WORLD)).await.unwrap();
+            assert_eq!(results, json!("1111111"));
             win.destroy();
         });
     }

@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod downloads;
+mod engine;
 mod history;
 mod lists;
 mod passwords;

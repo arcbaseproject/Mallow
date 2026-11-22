@@ -1,6 +1,7 @@
 use crate::{
     app::App,
     config::{Session, SessionTab, Theme},
+    engine::{self, Permission, PermissionRequest, View},
     lists, theme, util, view,
 };
 use gtk::{gdk, gio, glib, prelude::*};
@@ -9,7 +10,6 @@ use std::{
     collections::HashMap,
     rc::Rc,
 };
-use webkit6::{WebView, prelude::*};
 
 const ZOOM_STEP: f64 = 0.1;
 
@@ -54,19 +54,19 @@ pub struct Tab {
     icon: gtk::Image,
     /// Stack child: the new-tab page or the WebView, created on first load.
     pub page: gtk::Box,
-    pub view: RefCell<Option<WebView>>,
+    pub view: RefCell<Option<View>>,
     /// URL to load when the tab is first shown (restored sessions).
     pub pending: RefCell<Option<String>>,
     /// Opened on the new-tab page, so Back from the first page returns to it.
     from_ntp: Cell<bool>,
     /// View set aside by Back to the new-tab page; Forward brings it back.
-    parked: RefCell<Option<WebView>>,
+    parked: RefCell<Option<View>>,
     /// Showing the native settings page (`mallow://settings`).
     internal: Cell<Option<Internal>>,
     /// One-shot "unload after inactivity" timer while in the background.
     unload_timer: RefCell<Option<glib::SourceId>>,
     /// History of an unloaded tab, restored when it is shown again.
-    suspended: RefCell<Option<webkit6::WebViewSessionState>>,
+    suspended: RefCell<Option<engine::SessionState>>,
     /// Shares a web process with a popup it opened or was opened by, so
     /// unloading must not terminate that process.
     shares_process: Cell<bool>,
@@ -92,12 +92,7 @@ impl Tab {
         if let Some(page) = self.internal.get() {
             return Some(page.uri().into());
         }
-        let live = self
-            .view
-            .borrow()
-            .as_ref()
-            .and_then(|v| v.uri())
-            .map(String::from);
+        let live = self.view.borrow().as_ref().and_then(|v| v.uri());
         live.or_else(|| self.pending.borrow().clone())
             .filter(|u| !u.is_empty())
     }
@@ -114,7 +109,7 @@ pub struct Window {
     pub downloads: Rc<crate::downloads::Downloads>,
     /// Created with the first WebView, so an idle new-tab page starts no
     /// WebKit network process.
-    session: std::cell::OnceCell<webkit6::NetworkSession>,
+    session: std::cell::OnceCell<engine::Session>,
     tabs: RefCell<Vec<Rc<Tab>>>,
     current: RefCell<Option<Rc<Tab>>>,
     strip: gtk::Box,
@@ -336,7 +331,7 @@ impl Window {
         crate::suggest::attach(&self.url, &self.app);
         let cb = with(|w| {
             let loading = w.current_view().is_some_and(|v| v.is_loading());
-            w.with_view(|v| if loading { v.stop_loading() } else { v.reload() });
+            w.with_view(|v| if loading { v.stop() } else { v.reload() });
         });
         self.reload.connect_clicked(move |_| cb());
         let (star, lock) = (with(|w| w.edit_bookmark()), with(|w| w.show_site_info()));
@@ -469,14 +464,14 @@ impl Window {
             ("bookmark", |w| w.edit_bookmark()),
             ("site-info", |w| w.show_site_info()),
             ("zoom-in", |w| {
-                w.with_view(|v| v.set_zoom_level((v.zoom_level() + ZOOM_STEP).min(3.0)))
+                w.with_view(|v| v.set_zoom((v.zoom() + ZOOM_STEP).min(3.0)))
             }),
             ("zoom-out", |w| {
-                w.with_view(|v| v.set_zoom_level((v.zoom_level() - ZOOM_STEP).max(0.3)))
+                w.with_view(|v| v.set_zoom((v.zoom() - ZOOM_STEP).max(0.3)))
             }),
             ("zoom-reset", |w| {
                 let zoom = w.app.config.borrow().default_zoom;
-                w.with_view(|v| v.set_zoom_level(zoom))
+                w.with_view(|v| v.set_zoom(zoom))
             }),
             ("downloads", |w| w.downloads.show(Some(w.win.upcast_ref()))),
             ("history", |w| w.open_internal(Internal::History)),
@@ -618,7 +613,7 @@ impl Window {
             let z = weak
                 .upgrade()
                 .and_then(|w| w.current_view())
-                .map_or(1.0, |v| v.zoom_level());
+                .map_or(1.0, |v| v.zoom());
             p.set_label(&format!("{:.0}%", z * 100.0));
         };
         let r = refresh.clone();
@@ -845,7 +840,7 @@ impl Window {
 
     /// For `window.open()` and "open in new window": the view must be related
     /// to its opener and is returned to WebKit unloaded.
-    pub fn new_related_tab(self: &Rc<Self>, related: &WebView) -> WebView {
+    pub fn new_related_tab(self: &Rc<Self>, related: &View) -> View {
         let tab = self.add_tab();
         tab.shares_process.set(true);
         let opener = self
@@ -904,11 +899,7 @@ impl Window {
         match (state, tab.uri()) {
             (Some(state), _) => {
                 let t = self.add_tab();
-                let v = self.ensure_view(&t, None);
-                v.restore_session_state(&state);
-                if let Some(item) = v.back_forward_list().and_then(|l| l.current_item()) {
-                    v.go_to_back_forward_list_item(&item);
-                }
+                self.ensure_view(&t, None).restore(&state);
                 self.select(&t);
             }
             (None, uri) => {
@@ -917,7 +908,7 @@ impl Window {
         }
     }
 
-    pub fn ensure_view(self: &Rc<Self>, tab: &Rc<Tab>, related: Option<&WebView>) -> WebView {
+    pub fn ensure_view(self: &Rc<Self>, tab: &Rc<Tab>, related: Option<&View>) -> View {
         if let Some(v) = tab.view.borrow().as_ref() {
             return v.clone();
         }
@@ -929,7 +920,7 @@ impl Window {
         while let Some(child) = tab.page.first_child() {
             tab.page.remove(&child);
         }
-        tab.page.append(&v);
+        tab.page.append(&v.widget());
         *tab.view.borrow_mut() = Some(v.clone());
         v
     }
@@ -940,7 +931,7 @@ impl Window {
             self.show_internal(tab, page);
             return;
         }
-        self.ensure_view(tab, None).load_uri(uri);
+        self.ensure_view(tab, None).load(uri);
     }
 
     pub fn select(self: &Rc<Self>, tab: &Rc<Tab>) {
@@ -963,11 +954,7 @@ impl Window {
             // Reload an unloaded tab with its back/forward history intact.
             tab.pending.take();
             tab.root.remove_css_class("unloaded");
-            let v = self.ensure_view(tab, None);
-            v.restore_session_state(&state);
-            if let Some(item) = v.back_forward_list().and_then(|l| l.current_item()) {
-                v.go_to_back_forward_list_item(&item);
-            }
+            self.ensure_view(tab, None).restore(&state);
         } else if let Some(u) = tab.pending.take() {
             self.load(tab, &u);
         }
@@ -1045,7 +1032,7 @@ impl Window {
     }
 
     /// Close the tab showing `view`; false if it is not in this window.
-    pub fn close_view(self: &Rc<Self>, view: &WebView) -> bool {
+    pub fn close_view(self: &Rc<Self>, view: &View) -> bool {
         let tab = self
             .tabs
             .borrow()
@@ -1195,7 +1182,7 @@ impl Window {
         }
         let Some(state) = v.session_state() else { return };
         tab.suspended.replace(Some(state));
-        tab.pending.replace(v.uri().map(String::from));
+        tab.pending.replace(v.uri());
         tab.view.replace(None);
         tab.parked.replace(None);
         while let Some(child) = tab.page.first_child() {
@@ -1205,7 +1192,7 @@ impl Window {
         // the memory is actually returned. The view is detached first, so
         // its final title/favicon changes no longer reach the tab.
         if !tab.shares_process.get() {
-            v.terminate_web_process();
+            v.terminate();
         }
         tab.root.add_css_class("unloaded");
     }
@@ -1228,7 +1215,7 @@ impl Window {
     }
 
     /// The network session if a page has created it already.
-    pub fn live_session(&self) -> Option<webkit6::NetworkSession> {
+    pub fn live_session(&self) -> Option<engine::Session> {
         self.session.get().cloned()
     }
 
@@ -1307,7 +1294,7 @@ impl Window {
         self.select(&next);
     }
 
-    pub fn session(self: &Rc<Self>) -> &webkit6::NetworkSession {
+    pub fn session(self: &Rc<Self>) -> &engine::Session {
         self.session
             .get_or_init(|| self.app.network_session(self.private.then_some(&self.downloads)))
     }
@@ -1319,7 +1306,7 @@ impl Window {
             .is_some_and(|c| std::ptr::eq(c.as_ref(), tab))
     }
 
-    fn current_view(&self) -> Option<WebView> {
+    fn current_view(&self) -> Option<View> {
         self.current.borrow().as_ref()?.view.borrow().clone()
     }
 
@@ -1333,9 +1320,9 @@ impl Window {
         if v.can_go_back() {
             v.go_back();
         } else if tab.from_ntp.get() {
-            v.stop_loading();
-            v.set_is_muted(true);
-            tab.page.remove(&v);
+            v.stop();
+            v.set_muted(true);
+            tab.page.remove(&v.widget());
             tab.view.replace(None);
             tab.parked.replace(Some(v));
             tab.page.append(&self.new_tab_page(&tab));
@@ -1358,16 +1345,17 @@ impl Window {
         while let Some(child) = tab.page.first_child() {
             tab.page.remove(&child);
         }
-        v.set_is_muted(false);
-        tab.page.append(&v);
+        v.set_muted(false);
+        tab.page.append(&v.widget());
         tab.set_title(v.title().as_deref().unwrap_or(""));
         tab.set_icon(v.favicon().as_ref());
         tab.view.replace(Some(v.clone()));
-        self.sync_ui();
+        // Focus first: sync_ui leaves a focused address bar alone.
         v.grab_focus();
+        self.sync_ui();
     }
 
-    fn with_view(&self, f: impl FnOnce(&WebView)) {
+    fn with_view(&self, f: impl FnOnce(&View)) {
         if let Some(v) = self.current_view() {
             f(&v);
         }
@@ -1500,8 +1488,8 @@ impl Window {
         let secure = uri.starts_with("https://")
             && view
                 .as_ref()
-                .and_then(|v| v.tls_info())
-                .is_some_and(|(_, flags)| flags.is_empty());
+                .and_then(|v| v.certificate())
+                .is_some_and(|c| c.problems.is_none());
         let (icon, tip) = if let Some(page) = tab.internal.get() {
             (page.icon(), "Built-in Mallow page")
         } else if uri.is_empty() {
@@ -1578,7 +1566,7 @@ impl Window {
             return;
         };
         self.progress.set_visible(v.is_loading());
-        self.progress.set_fraction(v.estimated_load_progress().max(0.05));
+        self.progress.set_fraction(v.progress().max(0.05));
     }
 
     fn navigate_from_omnibox(self: &Rc<Self>) {
@@ -1725,11 +1713,13 @@ impl Window {
         };
         let Some(uri) = tab.uri() else { return };
         let host = util::host(&uri).to_string();
-        let tls = self.current_view().and_then(|v| v.tls_info());
         let https = uri.starts_with("https://");
-        let cert = tls.filter(|_| https);
+        let cert = self
+            .current_view()
+            .and_then(|v| v.certificate())
+            .filter(|_| https);
         let (icon, tone, headline, detail) = match &cert {
-            Some((_, flags)) if flags.is_empty() => (
+            Some(c) if c.problems.is_none() => (
                 "m-lock-symbolic",
                 "good",
                 "Connection is secure",
@@ -1846,7 +1836,7 @@ impl Window {
         }
         main.append(&privacy);
 
-        let origin = webkit6::SecurityOrigin::for_uri(&uri).to_str().to_string();
+        let origin = engine::origin(&uri);
         let mut perms: Vec<_> = self
             .permissions
             .borrow()
@@ -1891,7 +1881,7 @@ impl Window {
         stack.add_named(&main, Some("main"));
 
         // --- certificate page
-        if let Some((cert, flags)) = &cert {
+        if let Some(cert) = &cert {
             let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
             let back = gtk::Button::from_icon_name("m-arrow_back-symbolic");
             back.add_css_class("icon-btn");
@@ -1914,36 +1904,36 @@ impl Window {
                     .map(|s| s.trim().to_string())
                     .unwrap_or_default()
             };
-            let subject = cert.subject_name().map(String::from).unwrap_or_default();
-            let issuer = cert.issuer_name().map(String::from).unwrap_or_default();
+            let (subject, issuer) = (&cert.subject, &cert.issuer);
             let group = info_group();
             group.append(&field_row(
                 "Issued to",
-                util::dn_field(&subject, "CN").unwrap_or(&subject),
+                util::dn_field(subject, "CN").unwrap_or(subject),
                 false,
             ));
             group.append(&field_row(
                 "Issued by",
-                util::dn_field(&issuer, "O")
-                    .or(util::dn_field(&issuer, "CN"))
-                    .unwrap_or(&issuer),
+                util::dn_field(issuer, "O")
+                    .or(util::dn_field(issuer, "CN"))
+                    .unwrap_or(issuer),
                 false,
             ));
             group.append(&field_row(
                 "Valid",
                 &format!(
                     "{} – {}",
-                    date(cert.not_valid_before()),
-                    date(cert.not_valid_after())
+                    date(cert.not_before.clone()),
+                    date(cert.not_after.clone())
                 ),
                 false,
             ));
-            if !flags.is_empty() {
-                group.append(&field_row("Problems", &format!("{flags:?}"), false));
+            if let Some(problems) = &cert.problems {
+                group.append(&field_row("Problems", problems, false));
             }
             if let Some(hex) = cert
-                .certificate()
-                .and_then(|der| glib::compute_checksum_for_data(glib::ChecksumType::Sha256, &der))
+                .der
+                .as_ref()
+                .and_then(|der| glib::compute_checksum_for_data(glib::ChecksumType::Sha256, der))
             {
                 let pairs: Vec<String> = util::fingerprint(&hex).split(':').map(String::from).collect();
                 let lines: Vec<String> = pairs.chunks(8).map(|c| c.join(":")).collect();
@@ -1976,41 +1966,32 @@ impl Window {
         self.find_bar.set_reveal_child(false);
         self.find_label.set_text("");
         if let Some(v) = self.current_view() {
-            if let Some(fc) = v.find_controller() {
-                fc.search_finish();
-            }
+            v.find_finish();
             v.grab_focus();
         }
     }
 
     fn find(&self, _step: bool) {
-        let Some(fc) = self.current_view().and_then(|v| v.find_controller()) else {
+        let Some(v) = self.current_view() else {
             return;
         };
         let text = self.find_entry.text();
         if text.is_empty() {
-            fc.search_finish();
             self.find_label.set_text("");
-            return;
         }
-        let opts = (webkit6::FindOptions::CASE_INSENSITIVE | webkit6::FindOptions::WRAP_AROUND).bits();
-        fc.count_matches(&text, opts, 1000);
-        fc.search(&text, opts, 1000);
+        v.find(&text);
     }
 
     fn find_step(&self, backwards: bool) {
-        let Some(fc) = self.current_view().and_then(|v| v.find_controller()) else {
+        let Some(v) = self.current_view() else {
             return;
         };
-        if fc
-            .search_text()
+        if v.find_text()
             .is_none_or(|t| t.as_str() != self.find_entry.text().as_str())
         {
             self.find(false);
-        } else if backwards {
-            fc.search_previous();
         } else {
-            fc.search_next();
+            v.find_next(backwards);
         }
     }
 
@@ -2018,67 +1999,49 @@ impl Window {
 
     /// Ask once per host and kind for this window; the request stays pending
     /// until the user answers.
-    pub fn ask_permission(self: &Rc<Self>, view: &WebView, req: &webkit6::PermissionRequest) {
+    pub fn ask_permission(self: &Rc<Self>, view: &View, req: PermissionRequest) {
         // Settings › Privacy can block a kind outright: deny without asking.
         let defaults = self.app.config.borrow().permissions;
         let block = |a: crate::config::Ask| a == crate::config::Ask::Block;
-        let blocked = if let Some(m) = req.downcast_ref::<webkit6::UserMediaPermissionRequest>() {
-            (m.is_for_video_device() && block(defaults.camera))
-                || (m.is_for_audio_device() && block(defaults.microphone))
-        } else if req.is::<webkit6::GeolocationPermissionRequest>() {
-            block(defaults.location)
-        } else if req.is::<webkit6::NotificationPermissionRequest>() {
-            block(defaults.notifications)
-        } else {
-            false
+        let blocked = match req.kind {
+            Permission::Media { video, audio } => {
+                (video && block(defaults.camera)) || (audio && block(defaults.microphone))
+            }
+            Permission::Location => block(defaults.location),
+            Permission::Notifications => block(defaults.notifications),
+            _ => false,
         };
         if blocked {
             req.deny();
             return;
         }
-        let kind = if let Some(m) = req.downcast_ref::<webkit6::UserMediaPermissionRequest>() {
-            match (m.is_for_video_device(), m.is_for_audio_device()) {
+        let kind = match &req.kind {
+            Permission::Media { video, audio } => match (video, audio) {
                 (true, true) => "use your camera and microphone",
                 (true, false) => "use your camera",
                 (false, true) => "use your microphone",
                 _ => "capture your screen",
+            },
+            Permission::Location => "know your location",
+            Permission::Notifications => "show notifications",
+            Permission::Clipboard => "read your clipboard",
+            Permission::PointerLock => "hide and lock your mouse pointer",
+            Permission::DeviceInfo => "list your cameras and microphones",
+            Permission::MediaKeys => "play protected (DRM) content",
+            Permission::StorageAccess { .. } => "use cookies while embedded in another site",
+            Permission::Other => {
+                req.deny();
+                return;
             }
-        } else if req.is::<webkit6::GeolocationPermissionRequest>() {
-            "know your location"
-        } else if req.is::<webkit6::NotificationPermissionRequest>() {
-            "show notifications"
-        } else if req.is::<webkit6::ClipboardPermissionRequest>() {
-            "read your clipboard"
-        } else if req.is::<webkit6::PointerLockPermissionRequest>() {
-            "hide and lock your mouse pointer"
-        } else if req.is::<webkit6::DeviceInfoPermissionRequest>() {
-            "list your cameras and microphones"
-        } else if req.is::<webkit6::MediaKeySystemPermissionRequest>() {
-            "play protected (DRM) content"
-        } else if req.is::<webkit6::WebsiteDataAccessPermissionRequest>() {
-            "use cookies while embedded in another site"
-        } else {
-            req.deny();
-            return;
         };
-        let uri = view.uri().map(String::from).unwrap_or_default();
-        let origin = webkit6::SecurityOrigin::for_uri(&uri).to_str().to_string();
-        let (key, message) =
-            if let Some(access) = req.downcast_ref::<webkit6::WebsiteDataAccessPermissionRequest>() {
-                let (Some(current), Some(requester)) = (access.current_domain(), access.requesting_domain())
-                else {
-                    req.deny();
-                    return;
-                };
-                let message = format!("Allow {requester} to use cookies while embedded on {current}?");
-                (
-                    Some((origin, current.to_string(), requester.to_string())),
-                    message,
-                )
-            } else {
-                // These requests expose no requesting-frame origin. Prompt for each request.
-                (None, format!("Allow this page on {origin} to {kind}?"))
-            };
+        let origin = engine::origin(&view.uri().unwrap_or_default());
+        let (key, message) = if let Permission::StorageAccess { current, requester } = &req.kind {
+            let message = format!("Allow {requester} to use cookies while embedded on {current}?");
+            (Some((origin, current.clone(), requester.clone())), message)
+        } else {
+            // These requests expose no requesting-frame origin. Prompt for each request.
+            (None, format!("Allow this page on {origin} to {kind}?"))
+        };
         let known = key
             .as_ref()
             .and_then(|key| self.permissions.borrow().get(key).copied());
@@ -2102,7 +2065,6 @@ impl Window {
             .cancel_button(0)
             .default_button(0)
             .build();
-        let req = req.clone();
         let map = Rc::downgrade(self);
         dialog.choose(Some(&self.win), None::<&gio::Cancellable>, move |r| {
             let allowed = r == Ok(1);

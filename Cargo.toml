@@ -20,6 +20,9 @@ rusqlite = "0.43.0"
 serde = { version = "1.0.229", features = ["derive"] }
 soup3 = "0.9"
 toml = "1.2.2"
+
+# Engine backends, one per OS (see src/engine).
+[target.'cfg(target_os = "linux")'.dependencies]
 webkit6 = { version = "0.6.1", features = ["v2_50"] }
 
 [build-dependencies]
