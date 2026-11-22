@@ -109,10 +109,16 @@ pub fn attach(entry: &gtk::Entry, app: &Rc<App>) {
                 return;
             }
             // A search row's "URL" is its text: the entry turns it into a search.
-            let mut rows: Vec<(String, String)> =
-                searches.into_iter().take(SEARCH_LIMIT).map(|s| (s, String::new())).collect();
+            let mut rows: Vec<(String, String)> = searches
+                .into_iter()
+                .take(SEARCH_LIMIT)
+                .map(|s| (s, String::new()))
+                .collect();
             let n_search = rows.len();
-            for (url, title) in marks.into_iter().chain(visits.into_iter().map(|v| (v.url, v.title))) {
+            for (url, title) in marks
+                .into_iter()
+                .chain(visits.into_iter().map(|v| (v.url, v.title)))
+            {
                 if !rows.iter().any(|(u, _)| *u == url) {
                     rows.push((url, title));
                 }
@@ -266,7 +272,11 @@ fn suggestion_row(app: &Rc<App>, url: &str, title: &str, search: bool) -> gtk::L
     if !title.is_empty() {
         b.append(&label(url, "suggest-url"));
     }
-    let icon = gtk::Image::from_icon_name(if search { "m-search-symbolic" } else { "m-public-symbolic" });
+    let icon = gtk::Image::from_icon_name(if search {
+        "m-search-symbolic"
+    } else {
+        "m-public-symbolic"
+    });
     icon.add_css_class("suggest-icon");
     if !search {
         let session = app.network_session(None);
@@ -281,7 +291,11 @@ fn suggestion_row(app: &Rc<App>, url: &str, title: &str, search: bool) -> gtk::L
     line.append(&icon);
     line.append(&b);
     let row = gtk::ListBoxRow::builder().child(&line).focusable(false).build();
-    let label = if search { format!("Search for {url}") } else { url.to_string() };
+    let label = if search {
+        format!("Search for {url}")
+    } else {
+        url.to_string()
+    };
     row.update_property(&[gtk::accessible::Property::Label(&label)]);
     row
 }
