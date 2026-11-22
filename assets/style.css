@@ -303,7 +303,7 @@ popover separator {
 .appearance {
   padding: 6px 4px;
 }
-.segmented togglebutton {
+.segmented button {
   min-height: 36px;
   border-radius: 999px;
   border: 1px solid var(--outline-variant);
@@ -311,7 +311,7 @@ popover separator {
   box-shadow: none;
   color: var(--on-surface-variant);
 }
-.segmented togglebutton:checked {
+.segmented button:checked {
   background: var(--secondary-container);
   color: var(--on-secondary-container);
   border-color: transparent;
@@ -359,7 +359,7 @@ button.tonal {
 
 /* ---------- focus & motion ---------- */
 button:focus-visible,
-togglebutton:focus-visible,
+button.toggle:focus-visible,
 menubutton > button:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;

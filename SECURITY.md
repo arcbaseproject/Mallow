@@ -6,7 +6,7 @@ Mallow opens pages from strangers on the internet. This file explains what prote
 
 Report it privately. Don't open a public issue.
 
-Contact: **TODO: add a private contact (email or private advisory link) before publishing**
+Use GitHub's private reporting: open the [Security tab](https://github.com/arcbaseproject/Mallow/security) and choose **Report a vulnerability**, or go straight to the [new advisory form](https://github.com/arcbaseproject/Mallow/security/advisories/new). Only the maintainers see your report.
 
 Tell us the Mallow version or commit, your WebKitGTK version, the steps to reproduce and the impact you expect. We aim to reply within a week and will credit you in the fix unless you ask us not to.
 

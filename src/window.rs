@@ -1147,8 +1147,20 @@ impl Window {
             .position(gtk::PositionType::Bottom)
             .build();
         pop.add_css_class("info-popover");
-        pop.set_parent(&self.url);
-        pop.set_pointing_to(Some(&self.url.icon_area(pos)));
+        // Parent to the toolbar, not the entry: as the entry's child, clicks
+        // inside the popover reach the entry's text and dismiss the popover.
+        let area = self.url.icon_area(pos);
+        let anchor = self.url.parent().unwrap_or_else(|| self.url.clone().upcast());
+        let origin = gtk::graphene::Point::new(area.x() as f32, area.y() as f32);
+        let p = self.url.compute_point(&anchor, &origin).unwrap_or(origin);
+        let (x, y) = (p.x(), p.y());
+        pop.set_parent(&anchor);
+        pop.set_pointing_to(Some(&gdk::Rectangle::new(
+            x as i32,
+            y as i32,
+            area.width(),
+            area.height(),
+        )));
         pop.connect_closed(|p| {
             let p = p.clone();
             glib::idle_add_local_once(move || p.unparent());

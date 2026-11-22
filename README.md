@@ -91,12 +91,12 @@ We measured a release build in a headless sway session with software rendering. 
 
 | Scenario | Browser PSS | WebKit processes | WebKit PSS |
 |---|---|---|---|
-| Empty window | 50 to 59 MiB | 0 | 0 |
-| One simple page | 85 MiB | 2 | 109 MiB |
-| Plus a Wikipedia article | 92 MiB | 3 | 265 MiB |
-| Ten tabs | 97 MiB | 11 | 306 MiB |
+| Empty window | 59 MiB | 0 | 0 |
+| One simple page | 86 MiB | 2 | 109 MiB |
+| Plus a Wikipedia article | 92 MiB | 3 | 248 MiB |
+| Ten tabs | 98 MiB | 11 | 306 MiB |
 
-The window maps 90 to 180 ms after launch with a warm disk cache. With a page open and idle, Mallow and its WebKit processes used 0 to 1 CPU ticks over ten seconds.
+The window maps 90 to 145 ms after launch with a warm disk cache. Left idle with a page open, Mallow and its WebKit processes used no measurable CPU over ten seconds.
 
 WebKit gives each tab its own web process. That process isolation costs memory, and Mallow keeps it.
 
