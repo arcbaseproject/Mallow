@@ -1,0 +1,65 @@
+# Windows port checks (WebView2 backend). Builds with MSYS2's GTK and Rust
+# (UCRT64), runs clippy and the unit tests, then launches Mallow on a local
+# page and saves screenshots as an artifact. The runner ships the WebView2
+# runtime with Edge.
+name: Windows
+
+on:
+  push:
+    branches: ["windows-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libsoup3
+            mingw-w64-ucrt-x86_64-libsodium
+            mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-python
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --locked
+      - name: Build
+        run: cargo build --locked
+      - name: Smoke test with screenshots
+        run: |
+          mkdir -p shots site
+          cat > site/index.html <<'HTML'
+          <!doctype html><title>Mallow smoke test</title>
+          <h1 style="font:48px sans-serif">Hello from WebView2</h1>
+          <p id="ua"></p><script>ua.textContent = navigator.userAgent</script>
+          HTML
+          (cd site && python3 -m http.server 8765 >/dev/null 2>&1 &)
+          shot() {
+            powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; \$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \$i=New-Object System.Drawing.Bitmap \$b.Width,\$b.Height; [System.Drawing.Graphics]::FromImage(\$i).CopyFromScreen(\$b.Location,[System.Drawing.Point]::Empty,\$b.Size); \$i.Save('$(cygpath -w "$PWD/$1")')"
+          }
+          ./target/debug/mallow.exe http://127.0.0.1:8765/ > mallow.log 2>&1 &
+          sleep 20; shot shots/1-page.png
+          sleep 10; shot shots/2-later.png
+          taskkill //F //IM mallow.exe || true
+          cat mallow.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-smoke
+          path: |
+            shots/
+            mallow.log

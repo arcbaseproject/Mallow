@@ -1,6 +1,7 @@
 //! The browser engine boundary. Everything outside this module talks to web
 //! content only through these types; each operating system gets a backend that
-//! implements them on its native engine. Linux: WebKitGTK; macOS: WKWebView.
+//! implements them on its native engine. Linux: WebKitGTK; macOS: WKWebView;
+//! Windows: WebView2.
 //!
 //! Backends provide `Engine`, `Session`, `View`, `WeakView`, `Download`,
 //! `PermissionRequest`, `SessionState`, `Handler` and `version()` with the
@@ -16,8 +17,13 @@ mod wkwebview;
 #[cfg(target_os = "macos")]
 pub use wkwebview::*;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-compile_error!("Mallow has engine backends for Linux (WebKitGTK) and macOS (WKWebView) only so far.");
+#[cfg(target_os = "windows")]
+mod webview2;
+#[cfg(target_os = "windows")]
+pub use webview2::*;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+compile_error!("Mallow has engine backends for Linux (WebKitGTK), macOS (WKWebView) and Windows (WebView2) only.");
 
 /// Stages of a main-frame navigation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +59,8 @@ pub struct NavigationAction {
 }
 
 /// A main-frame response, before the engine renders it.
+// WebView2 has no response policy, so it never builds one.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub struct Response {
     pub main_resource: bool,
@@ -64,8 +72,8 @@ pub struct Response {
 
 /// What a site asks to use.
 #[derive(Clone, Debug, PartialEq, Eq)]
-// WKWebView only raises camera and microphone requests.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+// WKWebView only raises camera and microphone requests; WebView2 a few more.
+#[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
 pub enum Permission {
     /// Camera and/or microphone; neither means screen capture.
     Media {

@@ -30,6 +30,7 @@ fn main() -> glib::ExitCode {
         move |g| {
             let _ = state.set(app::App::new(g));
             // SIGHUP, SIGINT, SIGTERM: quit normally so the session is saved.
+            #[cfg(unix)]
             for signum in [1, 2, 15] {
                 let g = g.downgrade();
                 glib_unix::unix_signal_add_local(signum, move || {

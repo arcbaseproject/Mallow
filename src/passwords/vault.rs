@@ -6,7 +6,9 @@ use chacha20poly1305::{
 };
 use rand::{RngCore, rngs::OsRng};
 use rusqlite::{Connection, OpenFlags, params};
-use std::{os::unix::fs::OpenOptionsExt, path::Path};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 use zeroize::Zeroizing;
 
 pub type Result<T> = std::result::Result<T, &'static str>;
@@ -108,12 +110,12 @@ impl Vault {
         // Build the schema in a private sibling, then publish it whole. An interrupted
         // create leaves only a stray temporary file, never a partial vault at `path`.
         let tmp = path.with_extension(format!("tmp{:x}", OsRng.next_u64()));
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)
-            .map_err(|_| IO)?;
+        let mut file = std::fs::OpenOptions::new();
+        file.write(true).create_new(true);
+        // On Windows the per-user profile folder's ACL already keeps it private.
+        #[cfg(unix)]
+        file.mode(0o600);
+        file.open(&tmp).map_err(|_| IO)?;
         let built = (|| {
             let mut db =
                 Connection::open_with_flags(&tmp, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(|_| IO)?;
