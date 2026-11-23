@@ -22,7 +22,15 @@
 use super::{Certificate, DataKinds, DownloadEnd, LoadError, LoadEvent, NavigationAction, Permission, Response};
 use crate::config::{Autoplay, Config};
 use gtk::{gdk, glib, prelude::*};
-use webview2_com::{Microsoft::Web::WebView2::Win32::*, *};
+use webview2_com::{
+    BytesReceivedChangedEventHandler, CallDevToolsProtocolMethodCompletedHandler, ClearBrowsingDataCompletedHandler,
+    ContentLoadingEventHandler, CoreWebView2EnvironmentOptions, CreateCoreWebView2ControllerCompletedHandler,
+    CreateCoreWebView2EnvironmentCompletedHandler, DocumentTitleChangedEventHandler, DownloadStartingEventHandler,
+    FindMatchCountChangedEventHandler, FindStartCompletedHandler, Microsoft::Web::WebView2::Win32::*,
+    NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
+    PermissionRequestedEventHandler, ProcessFailedEventHandler, ServerCertificateErrorDetectedEventHandler,
+    SourceChangedEventHandler, StateChangedEventHandler, WindowCloseRequestedEventHandler, take_pwstr,
+};
 use windows::{
     Win32::{
         Foundation::{HWND, RECT},
@@ -173,9 +181,9 @@ fn create_env() {
     }
     let options: ICoreWebView2EnvironmentOptions = options.into();
     let folder = hs(&crate::config::data_dir().join("webview2").to_string_lossy());
-    let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(|hr, env| {
-        let next = match (hr, env) {
-            (Ok(()), Some(env)) => Env::Ready(env),
+    let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(|hr, created| {
+        let next = match (hr, created) {
+            (Ok(()), Some(created)) => Env::Ready(created),
             (r, _) => {
                 eprintln!("mallow: WebView2 runtime unavailable: {r:?}");
                 Env::Failed
