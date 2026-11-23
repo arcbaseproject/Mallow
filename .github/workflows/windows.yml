@@ -41,7 +41,9 @@ jobs:
         run: |
           cargo build --locked
           # webview2-com links the WebView2 loader dynamically; it must sit beside the exe.
-          cp "$(find ~/.cargo/registry/src -path '*webview2-com-sys-*/x64/WebView2Loader.dll' | head -1)" target/debug/
+          loader=$(find target "$(cygpath -u "$USERPROFILE")/.cargo" ~/.cargo -path '*x64/WebView2Loader.dll' 2>/dev/null | head -1)
+          echo "WebView2 loader: $loader"
+          cp "$loader" target/debug/
           ldd target/debug/mallow.exe | grep -iv "/c/windows" || true
       - name: Smoke test with screenshots
         run: |
