@@ -125,7 +125,10 @@ impl Vault {
                 .map_err(|_| IO)?;
             tx.commit().map_err(|_| IO)?;
             db.close().map_err(|_| IO)?;
-            std::fs::File::open(&tmp)
+            // Write access: Windows refuses to flush a read-only handle.
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&tmp)
                 .and_then(|f| f.sync_all())
                 .map_err(|_| IO)?;
             // hard_link fails if `path` exists, so an existing vault is never replaced.
