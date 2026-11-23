@@ -38,7 +38,11 @@ jobs:
       - name: Unit tests
         run: cargo test --locked
       - name: Build
-        run: cargo build --locked
+        run: |
+          cargo build --locked
+          # webview2-com links the WebView2 loader dynamically; it must sit beside the exe.
+          cp "$(ls target/debug/build/webview2-com-sys-*/out/x64/WebView2Loader.dll | head -1)" target/debug/
+          ldd target/debug/mallow.exe | grep -iv "/c/windows" || true
       - name: Smoke test with screenshots
         run: |
           mkdir -p shots site
