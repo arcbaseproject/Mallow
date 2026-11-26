@@ -41,7 +41,7 @@ Compare your version against the [WebKitGTK security advisories](https://webkitg
 
 **Updates.** Mallow only checks GitHub for a newer release and links to it. It never downloads or runs an update itself, so a compromised release page can't run code on your machine without you building it.
 
-**Passwords.** Mallow stores no passwords.
+**Passwords.** Mallow can save website passwords in a local vault encrypted under your master password. [PASSWORDS.md](PASSWORDS.md) describes how it stores them and what it protects against.
 
 **Private windows.** Each private window gets its own in-memory WebKit session. Mallow writes no history for it, and WebKit discards its cookies and site data when you close the window.
 

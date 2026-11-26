@@ -138,7 +138,6 @@ A private window keeps no history or cookies once you close it. Sites, your netw
 ## Known limitations
 
 - Settings has no HTTPS-only mode, "ask where to save" downloads or default-browser setup yet.
-- It has no password manager and no address-bar suggestions.
 - Mallow asks for most permissions every time, and forgets embedded-cookie answers when you close the window.
 - The bundled tracker list holds about 40 domains, and pages that load in the first moment after startup may slip past it.
 - Quitting cancels running downloads without asking.
