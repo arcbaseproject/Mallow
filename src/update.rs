@@ -14,7 +14,7 @@ pub const REPO: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// Ed25519 public key whose private half (the MALLOW_SIGNING_KEY secret)
 /// signs each release's SHA256SUMS in release.yml.
-const RELEASE_KEY: &str = "7eaed04500ff845cb2f75ec3f1a96aa914a06dcc65206b3f9a2a27a89c078acb";
+const RELEASE_KEY: &str = "ffc57d3279a90dba4cbec5a4e9a6f3a5d97cd14222940ef3dbb118e4264717ac";
 
 // libsodium; passwords::vault links it.
 unsafe extern "C" {
