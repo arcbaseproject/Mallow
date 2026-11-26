@@ -400,6 +400,11 @@ impl Window {
         let weak = Rc::downgrade(self);
         self.win.connect_close_request(move |_| {
             if let Some(w) = weak.upgrade() {
+                // Closing the last window quits; let quit ask about running downloads.
+                if !w.app.quitting.get() && w.app.window_count() == 1 && w.app.running_downloads() > 0 {
+                    w.app.quit(true);
+                    return glib::Propagation::Stop;
+                }
                 let tabs = w.tab_count();
                 if tabs > 1
                     && w.app.config.borrow().confirm_close

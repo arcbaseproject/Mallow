@@ -9,6 +9,7 @@ use std::cell::OnceCell;
 #[derive(Default)]
 pub struct Downloads {
     window: OnceCell<(gtk::Window, gtk::ListBox)>,
+    running: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
 impl Downloads {
@@ -34,6 +35,11 @@ impl Downloads {
             win.add_css_class("mallow");
             (win, list)
         })
+    }
+
+    /// Transfers that have started and not yet ended.
+    pub fn running(&self) -> usize {
+        self.running.get()
     }
 
     pub fn show(&self, parent: Option<&gtk::Window>) {
@@ -93,7 +99,10 @@ impl Downloads {
             }
         });
         let cancel = std::cell::Cell::new(Some(cancel));
+        let running = self.running.clone();
+        running.set(running.get() + 1);
         dl.connect_end(move |finished, end| {
+            running.set(running.get().saturating_sub(1));
             row.add_css_class("finished");
             if let Some(id) = cancel.take() {
                 action.disconnect(id);

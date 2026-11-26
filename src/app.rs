@@ -162,13 +162,7 @@ impl App {
                 }
             }
         });
-        add("quit", |a| {
-            a.quitting.set(true);
-            let windows = a.windows.borrow().clone();
-            for w in windows {
-                w.win.close();
-            }
-        });
+        add("quit", |a| a.quit(true));
         for (action, keys) in ACCELS {
             self.gtk.set_accels_for_action(action, keys);
         }
@@ -440,6 +434,53 @@ impl App {
 
     pub fn unregister(&self, w: &Window) {
         self.windows.borrow_mut().retain(|x| !std::ptr::eq(x.as_ref(), w));
+    }
+
+    pub fn window_count(&self) -> usize {
+        self.windows.borrow().len()
+    }
+
+    /// Downloads in progress across the shared list and every private window's.
+    pub fn running_downloads(&self) -> usize {
+        let windows = self.windows.borrow();
+        let private: usize = windows
+            .iter()
+            .filter(|w| w.private)
+            .map(|w| w.downloads.running())
+            .sum();
+        self.downloads.running() + private
+    }
+
+    /// Close every window. With `ask`, first confirm cancelling running downloads.
+    pub fn quit(self: &Rc<Self>, ask: bool) {
+        let running = self.running_downloads();
+        if ask && running > 0 {
+            let dialog = gtk::AlertDialog::builder()
+                .modal(true)
+                .message(if running == 1 {
+                    "Cancel 1 download?".to_string()
+                } else {
+                    format!("Cancel {running} downloads?")
+                })
+                .detail("Quitting stops downloads that haven't finished.")
+                .buttons(["Keep downloading", "Quit"])
+                .cancel_button(0)
+                .default_button(0)
+                .build();
+            let app = Rc::downgrade(self);
+            let parent = self.gtk.active_window();
+            dialog.choose(parent.as_ref(), None::<&gio::Cancellable>, move |r| {
+                if let (Ok(1), Some(app)) = (r, app.upgrade()) {
+                    app.quit(false);
+                }
+            });
+            return;
+        }
+        self.quitting.set(true);
+        let windows = self.windows.borrow().clone();
+        for w in windows {
+            w.win.close();
+        }
     }
 
     pub fn normal_window_count(&self) -> usize {
