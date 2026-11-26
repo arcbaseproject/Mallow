@@ -140,8 +140,8 @@ A private window keeps no history or cookies once you close it. Sites, your netw
 - Settings has no HTTPS-only mode, "ask where to save" downloads or default-browser setup yet.
 - Mallow asks for most permissions every time, and forgets embedded-cookie answers when you close the window.
 - The bundled tracker list holds about 40 domains, and pages that load in the first moment after startup may slip past it.
-- Quitting cancels running downloads without asking.
-- Mallow saves your session on quit and on SIGTERM, SIGINT or SIGHUP. A crash or SIGKILL loses changes since the last save.
+- Closing a private window while other windows stay open cancels its downloads without asking.
+- Mallow saves your session a couple of seconds after each tab change or page load, on quit, and on SIGTERM, SIGINT or SIGHUP. A crash or SIGKILL loses at most the last few seconds. With several windows open, the session holds the window that changed last.
 - Mallow approximates the Material palette with HSL tones, so contrast comes close to Material's HCT values without matching them.
 
 ## Documentation

@@ -127,6 +127,8 @@ pub struct Window {
     closed: RefCell<Vec<String>>,
     /// The user already agreed to close this window with several tabs.
     close_confirmed: Cell<bool>,
+    /// A debounced session save is queued.
+    save_queued: Cell<bool>,
     /// Storage access decisions scoped to the top-level origin and WebKit's domain pair.
     permissions: RefCell<HashMap<(String, String, String), bool>>,
 }
@@ -300,6 +302,7 @@ impl Window {
             find_label,
             closed: RefCell::default(),
             close_confirmed: Cell::new(false),
+            save_queued: Cell::new(false),
             permissions: RefCell::default(),
         });
         w.apply_prefs();
@@ -883,6 +886,22 @@ impl Window {
         }
     }
 
+    /// Save the session soon, so a crash or SIGKILL loses at most a few seconds.
+    pub fn queue_session_save(self: &Rc<Self>) {
+        if self.private || self.save_queued.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_seconds_local_once(2, move || {
+            let Some(w) = weak.upgrade() else { return };
+            w.save_queued.set(false);
+            // A destroyed window has cleared its tabs; don't overwrite the session with nothing.
+            if !w.tabs.borrow().is_empty() {
+                w.save_session();
+            }
+        });
+    }
+
     fn save_session(&self) {
         let current = self.current.borrow().clone();
         let mut s = Session::default();
@@ -940,6 +959,7 @@ impl Window {
     }
 
     pub fn select(self: &Rc<Self>, tab: &Rc<Tab>) {
+        self.queue_session_save();
         let prev = self.current.replace(Some(tab.clone()));
         if let Some(p) = prev {
             p.root.remove_css_class("active");
@@ -991,6 +1011,7 @@ impl Window {
     }
 
     pub fn close_tab(self: &Rc<Self>, tab: &Rc<Tab>) {
+        self.queue_session_save();
         self.cancel_unload(tab);
         let idx = {
             let mut tabs = self.tabs.borrow_mut();

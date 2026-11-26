@@ -69,6 +69,9 @@ pub fn create(win: &Rc<Window>, tab: &Rc<Tab>, related: Option<&View>) -> View {
         if event == LoadEvent::Committed && w.is_current(&t) {
             w.sync_ui(); // TLS state and back/forward are known now
         }
+        if event == LoadEvent::Finished {
+            w.queue_session_save();
+        }
         if event == LoadEvent::Finished && !w.private {
             let uri = v.uri().unwrap_or_default();
             if (uri.starts_with("https://") || uri.starts_with("http://"))
