@@ -39,7 +39,7 @@ Compare your version against the [WebKitGTK security advisories](https://webkitg
 
 **Permissions.** A site has to ask before it uses your camera, microphone, location, notifications, clipboard or similar features, and Mallow asks you on every request. WebKit doesn't tell Mallow which frame sent these requests, so Mallow won't reuse an answer that an embedded page could borrow. The one exception is a site asking for cookies while embedded in another site: WebKit names both sites, so Mallow remembers your answer for that pair until you close the window. The lock icon lists those answers and lets you reset them.
 
-**Updates.** Mallow only checks GitHub for a newer release and links to it. It never downloads or runs an update itself, so a compromised release page can't run code on your machine without you building it.
+**Updates.** Mallow installs an update only when you click Update. Each release's SHA256SUMS is signed with an Ed25519 key kept as a CI secret, and Mallow checks that signature against the public key built into it, then checks the package against SHA256SUMS. A compromised release page alone can't get code installed; someone would also need the signing key.
 
 **Passwords.** Mallow can save website passwords in a local vault encrypted under your master password. [PASSWORDS.md](PASSWORDS.md) describes how it stores them and what it protects against.
 

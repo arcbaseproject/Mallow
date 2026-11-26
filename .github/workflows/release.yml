@@ -94,6 +94,17 @@ jobs:
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS
+      # Mallow's updater installs a release only if SHA256SUMS verifies against
+      # RELEASE_KEY in src/update.rs, the public half of this secret.
+      - name: Sign checksums
+        env:
+          SIGNING_KEY: ${{ secrets.MALLOW_SIGNING_KEY }}
+        run: |
+          [ -n "$SIGNING_KEY" ] || { echo "The MALLOW_SIGNING_KEY secret is not set." >&2; exit 1; }
+          key="$RUNNER_TEMP/signing-key.pem"
+          (umask 077; printf '%s\n' "$SIGNING_KEY" > "$key")
+          openssl pkeyutl -sign -inkey "$key" -rawin -in dist/SHA256SUMS -out dist/SHA256SUMS.sig
+          rm -f "$key"
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}

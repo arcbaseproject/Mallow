@@ -1068,8 +1068,8 @@ impl Window {
         tab.map(|t| self.close_tab(&t)).is_some()
     }
 
-    /// Bottom-left toast offering a newer release. "Update" opens the
-    /// release page; Mallow never installs anything itself.
+    /// Bottom-left toast offering a newer release. "Update" installs it
+    /// (see update::install) or, where that isn't possible, opens the release page.
     pub fn show_update_toast(self: &Rc<Self>, version: &str, url: &str) {
         let icon = gtk::Image::from_icon_name(crate::app::APP_ID);
         icon.set_pixel_size(32);
@@ -1135,12 +1135,45 @@ impl Window {
         let dismiss = Rc::new(dismiss);
         let d = dismiss.clone();
         later.connect_clicked(move |_| d());
-        let (w, url) = (Rc::downgrade(self), url.to_string());
-        update.connect_clicked(move |_| {
-            if let Some(w) = w.upgrade() {
-                w.new_tab(Some(&url), true);
+        // Restart once installed; the release page if installing isn't possible or failed.
+        let restart: Rc<RefCell<Option<std::path::PathBuf>>> = Rc::default();
+        let fallback = Rc::new(Cell::new(!crate::update::can_install()));
+        let (w, url, version) = (Rc::downgrade(self), url.to_string(), version.to_string());
+        update.connect_clicked(move |b| {
+            let Some(w) = w.upgrade() else { return };
+            if let Some(exe) = restart.take() {
+                crate::update::restart_with(exe);
+                w.app.quit(true);
+                return;
             }
-            dismiss();
+            if fallback.get() {
+                w.new_tab(Some(&url), true);
+                dismiss();
+                return;
+            }
+            b.set_sensitive(false);
+            b.set_label("Updating…");
+            sub.set_text(&format!("Installing Mallow {version}…"));
+            let (b, sub, restart, fallback) =
+                (b.downgrade(), sub.downgrade(), restart.clone(), fallback.clone());
+            crate::update::install(&url, &version, move |res| {
+                let (Some(b), Some(sub)) = (b.upgrade(), sub.upgrade()) else {
+                    return;
+                };
+                match res {
+                    Ok(exe) => {
+                        restart.replace(Some(exe));
+                        sub.set_text("Restart Mallow to finish");
+                        b.set_label("Restart");
+                    }
+                    Err(e) => {
+                        fallback.set(true);
+                        sub.set_text(&format!("Update failed: {e}"));
+                        b.set_label("Open page");
+                    }
+                }
+                b.set_sensitive(true);
+            });
         });
     }
 

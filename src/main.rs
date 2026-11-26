@@ -56,5 +56,7 @@ fn main() -> glib::ExitCode {
             a.open(files);
         }
     });
-    gapp.run()
+    let code = gapp.run();
+    update::relaunch_if_requested();
+    code
 }

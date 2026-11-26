@@ -127,7 +127,7 @@ WebKit gives each tab its own web process. That process isolation costs memory, 
 
 ## Updates
 
-When a newer release appears on GitHub, Mallow shows a toast in the bottom-left corner. Update opens the release page. Mallow never downloads or runs anything itself, because release builds aren't signed. To update a source checkout, run `git pull` and then `./run.sh`.
+When a newer release appears on GitHub, Mallow shows a toast in the bottom-left corner. On Linux, if you installed the .deb, .rpm or tarball from a release, Update downloads the new package, checks it against the release's signed checksum list, installs it (asking for your password when the install needs root) and offers a restart. Anywhere else, Update opens the release page. To update a source checkout, run `git pull` and then `./run.sh`.
 
 ## Privacy
 
