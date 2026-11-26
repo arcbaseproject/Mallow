@@ -7,7 +7,7 @@ use soup::prelude::*;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::Mutex,
 };
 
 pub const REPO: &str = env!("CARGO_PKG_REPOSITORY");
@@ -279,19 +279,24 @@ async fn run(argv: &[OsString]) -> Result<(), String> {
     Err(format!("{} failed", cmd.to_string_lossy()))
 }
 
-static RESTART: OnceLock<PathBuf> = OnceLock::new();
+static RESTART: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Start `exe` once this process has quit (see main).
 pub fn restart_with(exe: PathBuf) {
-    let _ = RESTART.set(exe);
+    *RESTART.lock().unwrap() = Some(exe);
+}
+
+/// The user called off the quit that would have restarted.
+pub fn cancel_restart() {
+    RESTART.lock().unwrap().take();
 }
 
 pub fn relaunch_if_requested() {
     #[cfg(unix)]
-    if let Some(exe) = RESTART.get() {
+    if let Some(exe) = RESTART.lock().unwrap().take() {
         use std::os::unix::process::CommandExt;
         // exec drops this process's bus name, so the new one starts as the main instance.
-        let e = std::process::Command::new(exe).exec();
+        let e = std::process::Command::new(&exe).exec();
         eprintln!("Mallow: couldn't restart {}: {e}", exe.display());
     }
 }

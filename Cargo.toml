@@ -1,6 +1,6 @@
 [package]
 name = "mallow"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "A small, fast Linux browser built on GTK 4 and WebKitGTK"
 license = "MIT"

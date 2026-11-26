@@ -470,8 +470,9 @@ impl App {
             let app = Rc::downgrade(self);
             let parent = self.gtk.active_window();
             dialog.choose(parent.as_ref(), None::<&gio::Cancellable>, move |r| {
-                if let (Ok(1), Some(app)) = (r, app.upgrade()) {
-                    app.quit(false);
+                match (r, app.upgrade()) {
+                    (Ok(1), Some(app)) => app.quit(false),
+                    _ => crate::update::cancel_restart(),
                 }
             });
             return;
