@@ -24,9 +24,9 @@ use objc2::{
 };
 use objc2_app_kit::{NSEventModifierFlags, NSView, NSWindow};
 use objc2_foundation::{
-    NSArray, NSDate, NSDictionary, NSError, NSKeyValueChangeKey, NSKeyValueObservingOptions, NSNumber,
-    NSObject, NSObjectNSKeyValueObserverRegistration, NSObjectProtocol, NSPoint, NSRect, NSSet, NSSize,
-    NSProgressReporting, NSString, NSURL, NSURLRequest, NSURLResponse, NSHTTPURLResponse,
+    NSArray, NSDate, NSDictionary, NSError, NSHTTPURLResponse, NSKeyValueChangeKey,
+    NSKeyValueObservingOptions, NSNumber, NSObject, NSObjectNSKeyValueObserverRegistration, NSObjectProtocol,
+    NSPoint, NSProgressReporting, NSRect, NSSet, NSSize, NSString, NSURL, NSURLRequest, NSURLResponse,
 };
 use objc2_web_kit::*;
 use std::{
@@ -49,7 +49,10 @@ pub fn origin(uri: &str) -> String {
         Ok(u) => {
             let scheme = u.scheme();
             let host = u.host().unwrap_or_default();
-            let default = matches!((scheme.as_str(), u.port()), ("https", 443) | ("http", 80) | (_, -1));
+            let default = matches!(
+                (scheme.as_str(), u.port()),
+                ("https", 443) | ("http", 80) | (_, -1)
+            );
             if default {
                 format!("{scheme}://{host}")
             } else {
@@ -145,7 +148,8 @@ impl Engine {
                 Some(list) => unsafe { content.addContentRuleList(list) },
                 None => eprintln!(
                     "mallow: content filter failed to compile: {}",
-                    unsafe { err.as_ref() }.map_or_else(String::new, |e| e.localizedDescription().to_string())
+                    unsafe { err.as_ref() }
+                        .map_or_else(String::new, |e| e.localizedDescription().to_string())
                 ),
             }
         });
@@ -232,9 +236,11 @@ impl Session {
         };
         let done = RcBlock::new(|| {});
         unsafe {
-            self.0
-                .store
-                .removeDataOfTypes_modifiedSince_completionHandler(&types, &NSDate::distantPast(), &done)
+            self.0.store.removeDataOfTypes_modifiedSince_completionHandler(
+                &types,
+                &NSDate::distantPast(),
+                &done,
+            )
         };
     }
 
@@ -521,7 +527,9 @@ impl Delegate {
     }
 
     fn failed(&self, w: &WKWebView, error: &NSError) {
-        let Some(inner) = self.ivars().upgrade() else { return };
+        let Some(inner) = self.ivars().upgrade() else {
+            return;
+        };
         let domain = error.domain().to_string();
         let code = error.code();
         // Cancelled (Stop, new navigation) and "frame load interrupted" (a
@@ -542,7 +550,11 @@ impl Delegate {
             .objectForKey(&ns("NSErrorFailingURLStringKey"))
             .and_then(|o| o.downcast::<NSString>().ok())
             .map(|s| s.to_string())
-            .or_else(|| unsafe { w.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string()))
+            .or_else(|| {
+                unsafe { w.URL() }
+                    .and_then(|u| u.absoluteString())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_default();
         let message = error.localizedDescription().to_string();
         let page = inner
@@ -556,7 +568,9 @@ impl Delegate {
     }
 
     fn download(&self, download: &WKDownload) {
-        let Some(inner) = self.ivars().upgrade() else { return };
+        let Some(inner) = self.ivars().upgrade() else {
+            return;
+        };
         unsafe { download.setDelegate(Some(ProtocolObject::from_ref(self))) };
         let dl = Download::of(download);
         dl.0.view.replace(Rc::downgrade(&inner));
@@ -696,7 +710,9 @@ impl View {
         });
         let delegate = Delegate::new(Rc::downgrade(&inner));
         unsafe {
-            inner.wk.setNavigationDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+            inner
+                .wk
+                .setNavigationDelegate(Some(ProtocolObject::from_ref(&*delegate)));
             inner.wk.setUIDelegate(Some(ProtocolObject::from_ref(&*delegate)));
             for key in OBSERVED {
                 inner.wk.addObserver_forKeyPath_options_context(
@@ -797,7 +813,11 @@ impl View {
     }
     #[cfg(test)]
     pub fn load_html(&self, html: &str, base: Option<&str>) {
-        unsafe { self.0.wk.loadHTMLString_baseURL(&ns(html), base.and_then(url).as_deref()) };
+        unsafe {
+            self.0
+                .wk
+                .loadHTMLString_baseURL(&ns(html), base.and_then(url).as_deref())
+        };
     }
     pub fn reload(&self) {
         unsafe { self.0.wk.reload() };
@@ -816,7 +836,11 @@ impl View {
     }
     /// No mute API; a parked view suspends its media instead.
     pub fn set_muted(&self, muted: bool) {
-        unsafe { self.0.wk.setAllMediaPlaybackSuspended_completionHandler(muted, None) };
+        unsafe {
+            self.0
+                .wk
+                .setAllMediaPlaybackSuspended_completionHandler(muted, None)
+        };
     }
     /// WKWebView ends its process when the view is released.
     pub fn terminate(&self) {}
@@ -829,7 +853,9 @@ impl View {
 
     // --- find in page
     pub fn find(&self, text: &str) {
-        self.0.find_text.replace((!text.is_empty()).then(|| text.to_string()));
+        self.0
+            .find_text
+            .replace((!text.is_empty()).then(|| text.to_string()));
         if text.is_empty() {
             return;
         }
@@ -915,13 +941,15 @@ impl View {
             let _ = tx.send(out);
         });
         unsafe {
-            self.0.wk.callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
-                &ns(&wrapped),
-                Some(&dict),
-                None,
-                &content_world,
-                Some(&block),
-            )
+            self.0
+                .wk
+                .callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
+                    &ns(&wrapped),
+                    Some(&dict),
+                    None,
+                    &content_world,
+                    Some(&block),
+                )
         };
         rx.await.map_err(|_| "script cancelled".to_string())?
     }
@@ -1057,11 +1085,19 @@ fn place(inner: &Inner, p: &gtk::DrawingArea) {
     let Some(root) = p.root() else { return };
     let Some(native) = root.native() else { return };
     let Some(surface) = native.surface() else { return };
-    let Ok(surface) = surface.downcast::<gdk4_macos::MacosSurface>() else { return };
+    let Ok(surface) = surface.downcast::<gdk4_macos::MacosSurface>() else {
+        return;
+    };
     let ptr = surface.native() as *mut NSWindow;
-    let Some(window) = (unsafe { ptr.as_ref() }) else { return };
-    let Some(content) = window.contentView() else { return };
-    let Some(bounds) = p.compute_bounds(&root) else { return };
+    let Some(window) = (unsafe { ptr.as_ref() }) else {
+        return;
+    };
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    let Some(bounds) = p.compute_bounds(&root) else {
+        return;
+    };
     // GTK lays out in the window's coordinates including its CSD shadow;
     // translate by the surface offset of the native widget.
     let (ox, oy) = native.surface_transform();
@@ -1158,7 +1194,11 @@ impl Download {
                 };
                 let p = inner.wk.progress();
                 let (done, total) = (p.completedUnitCount().max(0) as u64, p.totalUnitCount());
-                let fraction = if total > 0 { done as f64 / total as f64 } else { 0.0 };
+                let fraction = if total > 0 {
+                    done as f64 / total as f64
+                } else {
+                    0.0
+                };
                 for f in inner.progress.all() {
                     f(fraction, done);
                 }

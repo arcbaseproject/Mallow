@@ -23,7 +23,9 @@ mod webview2;
 pub use webview2::*;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-compile_error!("Mallow has engine backends for Linux (WebKitGTK), macOS (WKWebView) and Windows (WebView2) only.");
+compile_error!(
+    "Mallow has engine backends for Linux (WebKitGTK), macOS (WKWebView) and Windows (WebView2) only."
+);
 
 /// Stages of a main-frame navigation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

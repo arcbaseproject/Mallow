@@ -19,17 +19,26 @@
 //!   downloads undisplayable responses itself).
 //! - Untrusted certificates never load: the certificate-error event cancels.
 
-use super::{Certificate, DataKinds, DownloadEnd, LoadError, LoadEvent, NavigationAction, Permission, Response};
+use super::{
+    Certificate, DataKinds, DownloadEnd, LoadError, LoadEvent, NavigationAction, Permission, Response,
+};
 use crate::config::{Autoplay, Config};
 use gtk::{gdk, glib, prelude::*};
+use std::{
+    cell::{Cell, RefCell},
+    ffi::c_void,
+    path::{Path, PathBuf},
+    rc::{Rc, Weak},
+};
 use webview2_com::{
-    BytesReceivedChangedEventHandler, CallDevToolsProtocolMethodCompletedHandler, ClearBrowsingDataCompletedHandler,
-    ContentLoadingEventHandler, CoreWebView2EnvironmentOptions, CreateCoreWebView2ControllerCompletedHandler,
-    CreateCoreWebView2EnvironmentCompletedHandler, DocumentTitleChangedEventHandler, DownloadStartingEventHandler,
-    FindMatchCountChangedEventHandler, FindStartCompletedHandler, Microsoft::Web::WebView2::Win32::*,
-    NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
-    PermissionRequestedEventHandler, ProcessFailedEventHandler, ServerCertificateErrorDetectedEventHandler,
-    SourceChangedEventHandler, StateChangedEventHandler, WindowCloseRequestedEventHandler, take_pwstr,
+    BytesReceivedChangedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
+    ClearBrowsingDataCompletedHandler, ContentLoadingEventHandler, CoreWebView2EnvironmentOptions,
+    CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
+    DocumentTitleChangedEventHandler, DownloadStartingEventHandler, FindMatchCountChangedEventHandler,
+    FindStartCompletedHandler, Microsoft::Web::WebView2::Win32::*, NavigationCompletedEventHandler,
+    NavigationStartingEventHandler, NewWindowRequestedEventHandler, PermissionRequestedEventHandler,
+    ProcessFailedEventHandler, ServerCertificateErrorDetectedEventHandler, SourceChangedEventHandler,
+    StateChangedEventHandler, WindowCloseRequestedEventHandler, take_pwstr,
 };
 use windows::{
     Win32::{
@@ -38,12 +47,6 @@ use windows::{
         UI::WindowsAndMessaging::{CreateWindowExW, WINDOW_EX_STYLE, WS_POPUP},
     },
     core::{BOOL, HSTRING, Interface, PCWSTR, PWSTR, w},
-};
-use std::{
-    cell::{Cell, RefCell},
-    ffi::c_void,
-    path::{Path, PathBuf},
-    rc::{Rc, Weak},
 };
 
 pub const NAME: &str = "Microsoft Edge WebView2";
@@ -61,7 +64,10 @@ pub fn origin(uri: &str) -> String {
         Ok(u) => {
             let scheme = u.scheme();
             let host = u.host().unwrap_or_default();
-            let default = matches!((scheme.as_str(), u.port()), ("https", 443) | ("http", 80) | (_, -1));
+            let default = matches!(
+                (scheme.as_str(), u.port()),
+                ("https", 443) | ("http", 80) | (_, -1)
+            );
             if default {
                 format!("{scheme}://{host}")
             } else {
@@ -200,7 +206,9 @@ fn create_env() {
         }
         Ok(())
     }));
-    if let Err(e) = unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), &folder, &options, &handler) } {
+    if let Err(e) =
+        unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), &folder, &options, &handler) }
+    {
         eprintln!("mallow: WebView2 runtime unavailable: {e}");
         ENV.with(|e| *e.borrow_mut() = Env::Failed);
     }
@@ -515,7 +523,10 @@ impl View {
     pub fn grab_focus(&self) {
         self.0.placeholder.grab_focus();
         self.0.with(|r| {
-            let _ = unsafe { r.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC) };
+            let _ = unsafe {
+                r.controller
+                    .MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
+            };
         });
     }
 
@@ -543,10 +554,14 @@ impl View {
         self.0.progress.get()
     }
     pub fn can_go_back(&self) -> bool {
-        self.0.core().is_some_and(|c| get_bool(|b| unsafe { c.CanGoBack(b) }))
+        self.0
+            .core()
+            .is_some_and(|c| get_bool(|b| unsafe { c.CanGoBack(b) }))
     }
     pub fn can_go_forward(&self) -> bool {
-        self.0.core().is_some_and(|c| get_bool(|b| unsafe { c.CanGoForward(b) }))
+        self.0
+            .core()
+            .is_some_and(|c| get_bool(|b| unsafe { c.CanGoForward(b) }))
     }
     pub fn has_history(&self) -> bool {
         self.uri().is_some_and(|u| u != "about:blank")
@@ -568,7 +583,10 @@ impl View {
     /// committed HTTPS page has a trusted certificate.
     pub fn certificate(&self) -> Option<Certificate> {
         let uri = self.uri()?;
-        if !uri.starts_with("https://") || self.0.error_uri.borrow().is_some() || self.is_loading() && !self.has_history() {
+        if !uri.starts_with("https://")
+            || self.0.error_uri.borrow().is_some()
+            || self.is_loading() && !self.has_history()
+        {
             return None;
         }
         let host = glib::Uri::parse(&uri, glib::UriFlags::NONE)
@@ -648,7 +666,9 @@ impl View {
 
     // --- find in page
     pub fn find(&self, text: &str) {
-        self.0.find_text.replace((!text.is_empty()).then(|| text.to_string()));
+        self.0
+            .find_text
+            .replace((!text.is_empty()).then(|| text.to_string()));
         if text.is_empty() {
             return;
         }
@@ -673,7 +693,13 @@ impl View {
     pub fn find_next(&self, backwards: bool) {
         self.0.with(move |r| {
             if let Some(find) = find_of(&r.core) {
-                let _ = unsafe { if backwards { find.FindPrevious() } else { find.FindNext() } };
+                let _ = unsafe {
+                    if backwards {
+                        find.FindPrevious()
+                    } else {
+                        find.FindNext()
+                    }
+                };
             }
         });
     }
@@ -706,7 +732,11 @@ impl View {
             }
             names.push(k.as_str());
         }
-        let args = if args.is_object() { args.to_string() } else { "{}".into() };
+        let args = if args.is_object() {
+            args.to_string()
+        } else {
+            "{}".into()
+        };
         // The result comes back as JSON text, so any value converts the same way.
         let expression = format!(
             "(async ({{{}}}) => JSON.stringify(await (async () => {{ {body} }})()))({args})",
@@ -725,7 +755,10 @@ impl View {
                 let _ = tx.send(hr.map_err(|e| e.to_string()).and_then(|()| script_result(&json)));
                 Ok(())
             }));
-            let _ = unsafe { r.core.CallDevToolsProtocolMethod(&hs("Runtime.evaluate"), &params, &done) };
+            let _ = unsafe {
+                r.core
+                    .CallDevToolsProtocolMethod(&hs("Runtime.evaluate"), &params, &done)
+            };
         });
         rx.await.map_err(|_| "script cancelled".to_string())?
     }
@@ -814,7 +847,9 @@ impl View {
 }
 
 fn find_of(core: &ICoreWebView2) -> Option<ICoreWebView2Find> {
-    core.cast::<ICoreWebView2_28>().ok().and_then(|c| unsafe { c.Find() }.ok())
+    core.cast::<ICoreWebView2_28>()
+        .ok()
+        .and_then(|c| unsafe { c.Find() }.ok())
 }
 
 /// The value of a `Runtime.evaluate` reply whose expression returned JSON text.
@@ -847,26 +882,27 @@ fn create_controller(inner: &Rc<Inner>) {
                 opts.SetProfileName(&hs(&name))?;
                 opts.SetIsInPrivateModeEnabled(private)?;
             }
-            let done = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |hr, controller| {
-                let controller = match (hr, controller) {
-                    (Ok(()), Some(c)) => c,
-                    (r, _) => {
-                        eprintln!("mallow: WebView2 view failed: {r:?}");
-                        return Ok(());
-                    }
-                };
-                match weak.upgrade() {
-                    Some(inner) => {
-                        if let Err(e) = setup(&inner, controller) {
-                            eprintln!("mallow: WebView2 view setup failed: {e}");
+            let done =
+                CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |hr, controller| {
+                    let controller = match (hr, controller) {
+                        (Ok(()), Some(c)) => c,
+                        (r, _) => {
+                            eprintln!("mallow: WebView2 view failed: {r:?}");
+                            return Ok(());
+                        }
+                    };
+                    match weak.upgrade() {
+                        Some(inner) => {
+                            if let Err(e) = setup(&inner, controller) {
+                                eprintln!("mallow: WebView2 view setup failed: {e}");
+                            }
+                        }
+                        None => {
+                            let _ = unsafe { controller.Close() };
                         }
                     }
-                    None => {
-                        let _ = unsafe { controller.Close() };
-                    }
-                }
-                Ok(())
-            }));
+                    Ok(())
+                }));
             unsafe { env10.CreateCoreWebView2ControllerWithOptions(parking(), &opts, &done) }
         })();
         if let Err(e) = made {
@@ -987,7 +1023,9 @@ fn setup(inner: &Rc<Inner>, controller: ICoreWebView2Controller) -> windows::cor
             let w = weak.clone();
             find.add_MatchCountChanged(
                 &FindMatchCountChangedEventHandler::create(Box::new(move |find, _| {
-                    let (Some(inner), Some(find)) = (w.upgrade(), find) else { return Ok(()) };
+                    let (Some(inner), Some(find)) = (w.upgrade(), find) else {
+                        return Ok(());
+                    };
                     let mut n = 0;
                     find.MatchCount(&mut n)?;
                     for f in inner.find_result.all() {
@@ -1006,7 +1044,10 @@ fn setup(inner: &Rc<Inner>, controller: ICoreWebView2Controller) -> windows::cor
             &mut t,
         )?;
     }
-    if let Ok(p) = core.cast::<ICoreWebView2_13>().and_then(|c| unsafe { c.Profile() }) {
+    if let Ok(p) = core
+        .cast::<ICoreWebView2_13>()
+        .and_then(|c| unsafe { c.Profile() })
+    {
         inner.session.register(p);
     }
     let ready = Ready { controller, core };
@@ -1039,7 +1080,14 @@ fn navigation_starting(inner: &Rc<Inner>, args: &ICoreWebView2NavigationStarting
     inner.error_uri.replace(None);
     inner.pending_uri.replace(Some(uri));
     set_progress(inner, true, 0.1);
-    load_event(inner, if redirect { LoadEvent::Redirected } else { LoadEvent::Started });
+    load_event(
+        inner,
+        if redirect {
+            LoadEvent::Redirected
+        } else {
+            LoadEvent::Started
+        },
+    );
 }
 
 fn navigation_completed(inner: &Rc<Inner>, args: &ICoreWebView2NavigationCompletedEventArgs) {
@@ -1060,7 +1108,9 @@ fn navigation_completed(inner: &Rc<Inner>, args: &ICoreWebView2NavigationComplet
     let _ = unsafe { args.WebErrorStatus(&mut status) };
     let (kind, message) = match status {
         COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED => return,
-        COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED => (LoadError::NotFound, "The host name could not be resolved."),
+        COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED => {
+            (LoadError::NotFound, "The host name could not be resolved.")
+        }
         COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT
         | COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED
         | COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID
@@ -1078,7 +1128,11 @@ fn navigation_completed(inner: &Rc<Inner>, args: &ICoreWebView2NavigationComplet
         _ => (LoadError::Other, "The page could not be loaded."),
     };
     let failing = inner.pending_uri.borrow().clone().unwrap_or_default();
-    let page = inner.load_failed.all().iter().find_map(|f| f(&failing, kind, message));
+    let page = inner
+        .load_failed
+        .all()
+        .iter()
+        .find_map(|f| f(&failing, kind, message));
     if let (Some(html), Some(core)) = (page, inner.core()) {
         inner.error_uri.replace(Some(failing));
         inner.error_nav.set(true);
@@ -1100,7 +1154,11 @@ fn new_window(inner: &Rc<Inner>, args: ICoreWebView2NewWindowRequestedEventArgs)
     };
     let opener = View(inner.clone());
     let blocked = inner.navigation.all().iter().any(|f| f(&action));
-    let created = if blocked { None } else { inner.create.all().iter().find_map(|f| f(&opener)) };
+    let created = if blocked {
+        None
+    } else {
+        inner.create.all().iter().find_map(|f| f(&opener))
+    };
     let (Some(view), Ok(deferral)) = (created, unsafe { args.GetDeferral() }) else {
         let _ = unsafe { args.SetHandled(true) };
         return;
@@ -1116,8 +1174,14 @@ fn permission(inner: &Rc<Inner>, args: ICoreWebView2PermissionRequestedEventArgs
     let mut kind = COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION;
     let _ = unsafe { args.PermissionKind(&mut kind) };
     let kind = match kind {
-        COREWEBVIEW2_PERMISSION_KIND_CAMERA => Permission::Media { video: true, audio: false },
-        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE => Permission::Media { video: false, audio: true },
+        COREWEBVIEW2_PERMISSION_KIND_CAMERA => Permission::Media {
+            video: true,
+            audio: false,
+        },
+        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE => Permission::Media {
+            video: false,
+            audio: true,
+        },
         COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION => Permission::Location,
         COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS => Permission::Notifications,
         COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ => Permission::Clipboard,
@@ -1146,7 +1210,9 @@ fn permission(inner: &Rc<Inner>, args: ICoreWebView2PermissionRequestedEventArgs
 }
 
 fn download_starting(inner: &Rc<Inner>, args: &ICoreWebView2DownloadStartingEventArgs) {
-    let Ok(op) = (unsafe { args.DownloadOperation() }) else { return };
+    let Ok(op) = (unsafe { args.DownloadOperation() }) else {
+        return;
+    };
     let dl = Download::new(op, inner);
     for f in inner.session.0.downloads.all() {
         f(dl.clone());
@@ -1203,12 +1269,16 @@ fn attach_native(inner: &Rc<Inner>) {
 
 /// Position the controller over the placeholder, in the window it is in.
 fn place(inner: &Inner, p: &gtk::DrawingArea) {
-    let Some(r) = inner.ready.borrow().clone() else { return };
+    let Some(r) = inner.ready.borrow().clone() else {
+        return;
+    };
     let Some(root) = p.root() else { return };
     let Some(native) = root.native() else { return };
     let Some(surface) = native.surface() else { return };
     let scale = surface.scale();
-    let Ok(surface) = surface.downcast::<gdk4_win32::Win32Surface>() else { return };
+    let Ok(surface) = surface.downcast::<gdk4_win32::Win32Surface>() else {
+        return;
+    };
     let hwnd = HWND(surface.handle().0);
     let Some(b) = p.compute_bounds(&root) else { return };
     // GTK lays out in the surface's coordinates including its CSD shadow;
@@ -1225,7 +1295,12 @@ fn place(inner: &Inner, p: &gtk::DrawingArea) {
         }
         if inner.bounds.get() != bounds {
             let (left, top, right, bottom) = bounds;
-            let _ = r.controller.SetBounds(RECT { left, top, right, bottom });
+            let _ = r.controller.SetBounds(RECT {
+                left,
+                top,
+                right,
+                bottom,
+            });
             inner.bounds.set(bounds);
         }
         if !inner.visible.get() && p.is_mapped() {
@@ -1300,7 +1375,11 @@ impl Download {
                         inner.op.BytesReceived(&mut done)?;
                         inner.op.TotalBytesToReceive(&mut total)?;
                         let done = done.max(0) as u64;
-                        let fraction = if total > 0 { done as f64 / total as f64 } else { 0.0 };
+                        let fraction = if total > 0 {
+                            done as f64 / total as f64
+                        } else {
+                            0.0
+                        };
                         for f in inner.progress.all() {
                             f(fraction, done);
                         }
@@ -1314,7 +1393,9 @@ impl Download {
         let _ = unsafe {
             d.0.op.add_StateChanged(
                 &StateChangedEventHandler::create(Box::new(move |_, _| {
-                    let Some(inner) = weak.upgrade() else { return Ok(()) };
+                    let Some(inner) = weak.upgrade() else {
+                        return Ok(());
+                    };
                     let mut state = COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS;
                     inner.op.State(&mut state)?;
                     let end = match state {
