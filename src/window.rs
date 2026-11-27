@@ -119,6 +119,8 @@ pub struct Window {
     pub stack: gtk::Stack,
     url: gtk::Entry,
     reload: gtk::Button,
+    /// One button per bookmark, oldest first; hidden when there are none.
+    bookmarks_bar: gtk::Box,
     progress: gtk::ProgressBar,
     pub status: gtk::Label,
     find_bar: gtk::Revealer,
@@ -212,6 +214,15 @@ impl Window {
             toolbar.append(w);
         }
 
+        let bookmarks_bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        bookmarks_bar.add_css_class("bookmarks-bar");
+        // Scrolls instead of widening the window when there are many.
+        let bookmarks_scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::External)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .child(&bookmarks_bar)
+            .build();
+
         // Find bar
         let find_entry = gtk::SearchEntry::builder()
             .placeholder_text("Find in page")
@@ -272,6 +283,7 @@ impl Window {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&tabbar);
         root.append(&toolbar);
+        root.append(&bookmarks_scroller);
         root.append(&find_bar);
         root.append(&overlay);
         win.set_child(Some(&root));
@@ -295,6 +307,7 @@ impl Window {
             stack,
             url,
             reload,
+            bookmarks_bar,
             progress,
             status,
             find_bar,
@@ -308,7 +321,9 @@ impl Window {
         w.apply_prefs();
         menu.set_popover(Some(&w.build_menu()));
         w.connect_signals(&find_prev, &find_next, &find_close);
+        w.connect_tab_drag();
         w.add_actions();
+        w.sync_bookmarks_bar();
         app.register(w.clone());
         w.win.present();
         w
@@ -773,6 +788,33 @@ impl Window {
             }
         });
         tab.root.add_controller(click);
+        // Hover: ask the tab's web process for its memory; the tooltip shows
+        // the title plus that once the reply arrives.
+        let hover = gtk::EventControllerMotion::new();
+        let t = Rc::downgrade(&tab);
+        hover.connect_enter(move |_, _, _| {
+            let Some(t) = t.upgrade() else { return };
+            let Some(view) = t.view.borrow().clone() else {
+                return;
+            };
+            let t = Rc::downgrade(&t);
+            glib::spawn_future_local(async move {
+                let (Some(bytes), Some(t)) = (view.memory().await, t.upgrade()) else {
+                    return;
+                };
+                let mb = bytes as f64 / (1024.0 * 1024.0);
+                let memory = if mb < 1024.0 {
+                    format!("{mb:.0} MB")
+                } else {
+                    format!("{:.1} GB", mb / 1024.0)
+                };
+                t.root.set_tooltip_markup(Some(&format!(
+                    "<b>{}</b>\n<span size=\"small\" fgalpha=\"70%\">{memory} memory</span>",
+                    glib::markup_escape_text(&t.title())
+                )));
+            });
+        });
+        tab.root.add_controller(hover);
 
         let group = gio::SimpleActionGroup::new();
         let tab_actions: &[(&str, fn(&Rc<Window>, &Rc<Tab>))] = &[
@@ -807,6 +849,112 @@ impl Window {
         tab.widget.set_reveal_child(true);
         self.update_tabbar();
         tab
+    }
+
+    /// Firefox-style reordering: press a tab and drag sideways; it swaps
+    /// with a neighbour as soon as the pointer passes that neighbour's middle.
+    fn connect_tab_drag(self: &Rc<Self>) {
+        // (tab, pointer x at press in strip coordinates, dragging yet)
+        let state: Rc<RefCell<Option<(Rc<Tab>, f64, bool)>>> = Rc::default();
+        // Capture phase so the drag is seen before the tab's button; it only
+        // claims the press (cancelling the click) once the pointer has moved.
+        let drag = gtk::GestureDrag::builder()
+            .propagation_phase(gtk::PropagationPhase::Capture)
+            .build();
+        let (w, st) = (Rc::downgrade(self), state.clone());
+        drag.connect_drag_begin(move |_, x, y| {
+            let Some(w) = w.upgrade() else { return };
+            let hit = w
+                .tabs
+                .borrow()
+                .iter()
+                .find(|t| {
+                    t.widget
+                        .compute_bounds(&w.strip)
+                        .is_some_and(|r| r.contains_point(&gtk::graphene::Point::new(x as f32, y as f32)))
+                })
+                .cloned();
+            st.replace(hit.map(|t| (t, x, false)));
+        });
+        let (w, st) = (Rc::downgrade(self), state.clone());
+        drag.connect_drag_update(move |g, dx, _| {
+            let Some(w) = w.upgrade() else { return };
+            let Some((tab, x0, started)) = st.borrow().clone() else {
+                return;
+            };
+            if !started {
+                if dx.abs() < 8.0 {
+                    return;
+                }
+                g.set_state(gtk::EventSequenceState::Claimed);
+                st.replace(Some((tab.clone(), x0, true)));
+                w.select(&tab);
+            }
+            w.drag_tab_to(&tab, x0 + dx);
+        });
+        let (w, st) = (Rc::downgrade(self), state);
+        drag.connect_drag_end(move |_, _, _| {
+            if let (Some((_, _, true)), Some(w)) = (st.take(), w.upgrade()) {
+                w.queue_session_save();
+            }
+        });
+        self.strip.add_controller(drag);
+    }
+
+    /// Swap `tab` with neighbours until the pointer at `x` (strip coordinates)
+    /// is between their middles.
+    fn drag_tab_to(&self, tab: &Rc<Tab>, x: f64) {
+        let middle = |t: &Rc<Tab>| {
+            t.widget
+                .compute_bounds(&self.strip)
+                .map(|r| f64::from(r.x() + r.width() / 2.0))
+        };
+        // Not `0..self.tabs.borrow().len()`: a `for` head's borrow lasts the whole loop.
+        let count = self.tabs.borrow().len();
+        for _ in 0..count {
+            let (next, prev) = {
+                let tabs = self.tabs.borrow();
+                let Some(i) = tabs.iter().position(|t| Rc::ptr_eq(t, tab)) else {
+                    return;
+                };
+                (
+                    tabs.get(i + 1).cloned(),
+                    i.checked_sub(1).and_then(|j| tabs.get(j).cloned()),
+                )
+            };
+            if let Some(n) = next.filter(|n| middle(n).is_some_and(|m| x > m)) {
+                self.move_tab(tab, &n, true);
+            } else if let Some(p) = prev.filter(|p| middle(p).is_some_and(|m| x < m)) {
+                self.move_tab(tab, &p, false);
+            } else {
+                return;
+            }
+        }
+    }
+
+    /// Move `tab` just before or after `target`, in the list and the strip.
+    fn move_tab(&self, tab: &Rc<Tab>, target: &Rc<Tab>, after: bool) {
+        {
+            let mut tabs = self.tabs.borrow_mut();
+            let from = tabs.iter().position(|t| Rc::ptr_eq(t, tab));
+            let to = tabs.iter().position(|t| Rc::ptr_eq(t, target));
+            let (Some(from), Some(to)) = (from, to) else {
+                return;
+            };
+            if from == to {
+                return;
+            }
+            reorder(&mut tabs, from, to, after);
+        }
+        // Same move in the strip, which may also hold tabs still animating closed.
+        let sibling = if after {
+            Some(target.widget.clone().upcast::<gtk::Widget>())
+        } else {
+            target.widget.prev_sibling()
+        };
+        if sibling.as_ref() != Some(tab.widget.upcast_ref()) {
+            self.strip.reorder_child_after(&tab.widget, sibling.as_ref());
+        }
     }
 
     fn tab_menu(&self, tab: &Tab, x: f64, y: f64) {
@@ -1476,52 +1624,16 @@ impl Window {
         });
         col.append(&search);
 
-        let bookmarks: Vec<(String, String)> = self
-            .app
-            .store()
-            .map(|s| s.bookmarks.borrow().iter().take(8).cloned().collect())
-            .unwrap_or_default();
-        if !bookmarks.is_empty() {
-            let flow = gtk::FlowBox::builder()
-                .selection_mode(gtk::SelectionMode::None)
-                .max_children_per_line(4)
-                .min_children_per_line(2)
-                .homogeneous(true)
-                .halign(gtk::Align::Center)
-                .build();
-            flow.add_css_class("ntp-tiles");
-            for (i, (url, name)) in bookmarks.into_iter().enumerate() {
-                let host = util::host(&url).trim_start_matches("www.").to_string();
-                let label = if name.is_empty() {
-                    host.as_str()
-                } else {
-                    name.as_str()
-                };
-                let avatar = self.app.site_avatar(&url, label, i);
-                avatar.set_halign(gtk::Align::Center);
-                let caption = gtk::Label::builder()
-                    .label(label)
-                    .ellipsize(gtk::pango::EllipsizeMode::End)
-                    .max_width_chars(11)
-                    .width_chars(11)
-                    .build();
-                caption.add_css_class("tile-caption");
-                let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
-                inner.append(&avatar);
-                inner.append(&caption);
-                let tile = gtk::Button::builder().child(&inner).tooltip_text(&url).build();
-                tile.add_css_class("tile");
-                let (w, t) = (Rc::downgrade(self), Rc::downgrade(tab));
-                tile.connect_clicked(move |_| {
-                    if let (Some(w), Some(t)) = (w.upgrade(), t.upgrade()) {
-                        w.load(&t, &url);
-                        w.sync_ui();
-                    }
-                });
-                flow.append(&tile);
-            }
-            col.append(&flow);
-        }
+        let flow = gtk::FlowBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .max_children_per_line(5)
+            .min_children_per_line(1)
+            .homogeneous(true)
+            .halign(gtk::Align::Center)
+            .build();
+        flow.add_css_class("ntp-tiles");
+        col.append(&flow);
+        self.fill_shortcuts(&flow, tab);
 
         let page = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -1530,6 +1642,143 @@ impl Window {
             .build();
         page.add_css_class("ntp");
         page.upcast()
+    }
+
+    /// New-tab page: one tile per shortcut, then a "+" tile that adds one.
+    /// Right-click a tile to remove it.
+    fn fill_shortcuts(self: &Rc<Self>, flow: &gtk::FlowBox, tab: &Rc<Tab>) {
+        flow.remove_all();
+        let shortcuts = self.app.config.borrow().shortcuts.clone();
+        for (i, s) in shortcuts.into_iter().enumerate() {
+            let label = if s.name.is_empty() {
+                util::host(&s.url).trim_start_matches("www.").to_string()
+            } else {
+                s.name
+            };
+            let tile = ntp_tile(&self.app.site_avatar(&s.url, &label, i), &label, &s.url);
+            let (w, t, url) = (Rc::downgrade(self), Rc::downgrade(tab), s.url.clone());
+            tile.connect_clicked(move |_| {
+                if let (Some(w), Some(t)) = (w.upgrade(), t.upgrade()) {
+                    w.load(&t, &url);
+                    w.sync_ui();
+                }
+            });
+            let right = gtk::GestureClick::builder().button(gdk::BUTTON_SECONDARY).build();
+            let (w, t, f, url) = (Rc::downgrade(self), Rc::downgrade(tab), flow.downgrade(), s.url);
+            right.connect_pressed(move |g, _, _, _| {
+                let (Some(w), Some(t), Some(f), Some(tile)) =
+                    (w.upgrade(), t.upgrade(), f.upgrade(), g.widget())
+                else {
+                    return;
+                };
+                let remove = gtk::Button::with_label("Remove");
+                remove.add_css_class("text-btn");
+                let pop = ntp_popover(&f, &tile, &remove);
+                let (pop_weak, url) = (pop.downgrade(), url.clone());
+                remove.connect_clicked(move |_| {
+                    w.app.update(|c| {
+                        if c.shortcuts.get(i).is_some_and(|s| s.url == url) {
+                            c.shortcuts.remove(i);
+                        }
+                    });
+                    if let Some(p) = pop_weak.upgrade() {
+                        p.popdown();
+                    }
+                    w.fill_shortcuts(&f, &t);
+                });
+                pop.popup();
+            });
+            tile.add_controller(right);
+            flow.append(&tile);
+        }
+
+        let plus = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        plus.set_hexpand(false);
+        plus.add_css_class("tile-avatar");
+        plus.add_css_class("add-shortcut");
+        let icon = gtk::Image::builder()
+            .icon_name("m-add-symbolic")
+            .hexpand(true)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+        plus.append(&icon);
+        let add = ntp_tile(&plus, "Add shortcut", "Add shortcut");
+        let (w, t, f) = (Rc::downgrade(self), Rc::downgrade(tab), flow.downgrade());
+        add.connect_clicked(move |b| {
+            if let (Some(w), Some(t), Some(f)) = (w.upgrade(), t.upgrade(), f.upgrade()) {
+                w.shortcut_editor(&f, &t, b);
+            }
+        });
+        flow.append(&add);
+    }
+
+    /// Name and URL fields for a new shortcut, under the "+" tile.
+    fn shortcut_editor(self: &Rc<Self>, flow: &gtk::FlowBox, tab: &Rc<Tab>, target: &gtk::Button) {
+        let heading = gtk::Label::builder().label("Add shortcut").xalign(0.0).build();
+        heading.add_css_class("popover-title");
+        let field = |label: &str| {
+            let l = gtk::Label::builder().label(label).xalign(0.0).build();
+            l.add_css_class("field-label");
+            let e = gtk::Entry::builder().activates_default(true).build();
+            e.add_css_class("field");
+            l.set_mnemonic_widget(Some(&e));
+            (l, e)
+        };
+        let (name_label, name) = field("Name");
+        let (url_label, url) = field("URL");
+        url.set_input_purpose(gtk::InputPurpose::Url);
+        let done = gtk::Button::with_label("Add");
+        done.add_css_class("filled");
+        done.set_halign(gtk::Align::End);
+        done.set_sensitive(false);
+        url.connect_changed({
+            let done = done.downgrade();
+            move |e| {
+                if let Some(d) = done.upgrade() {
+                    d.set_sensitive(!e.text().trim().is_empty());
+                }
+            }
+        });
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        content.add_css_class("bookmark-editor");
+        for w in [
+            heading.upcast_ref::<gtk::Widget>(),
+            name_label.upcast_ref(),
+            name.upcast_ref(),
+            url_label.upcast_ref(),
+            url.upcast_ref(),
+            done.upcast_ref(),
+        ] {
+            content.append(w);
+        }
+        let pop = ntp_popover(flow, target.upcast_ref(), &content);
+        pop.set_default_widget(Some(&done));
+        let (w, t, f, pop_weak) = (
+            Rc::downgrade(self),
+            Rc::downgrade(tab),
+            flow.downgrade(),
+            pop.downgrade(),
+        );
+        let name_entry = name.clone();
+        done.connect_clicked(move |_| {
+            let (Some(w), Some(t), Some(f)) = (w.upgrade(), t.upgrade(), f.upgrade()) else {
+                return;
+            };
+            let search = w.app.config.borrow().search_url.clone();
+            let Some(url) = util::resolve_input(&url.text(), &search) else {
+                return;
+            };
+            let name = name_entry.text().trim().to_string();
+            w.app
+                .update(|c| c.shortcuts.push(crate::config::Shortcut { name, url }));
+            if let Some(p) = pop_weak.upgrade() {
+                p.popdown();
+            }
+            w.fill_shortcuts(&f, &t);
+        });
+        pop.popup();
+        name.grab_focus();
     }
 
     // ----- toolbar state -----
@@ -1690,6 +1939,7 @@ impl Window {
         let title = existing.unwrap_or_else(|| tab.title());
         if is_new {
             store.bookmark(&uri, &title);
+            self.app.sync_bookmarks_bars();
             self.sync_ui();
         }
 
@@ -1758,6 +2008,7 @@ impl Window {
                 {
                     s.bookmark(&uri, &new_name);
                 }
+                w.app.sync_bookmarks_bars();
                 w.sync_ui();
             }
         });
@@ -2183,6 +2434,54 @@ impl Window {
         })
     }
 
+    /// Rebuild the bookmarks bar from the store.
+    pub fn sync_bookmarks_bar(self: &Rc<Self>) {
+        while let Some(c) = self.bookmarks_bar.first_child() {
+            self.bookmarks_bar.remove(&c);
+        }
+        let marks = self
+            .app
+            .store()
+            .map(|s| s.bookmarks.borrow().clone())
+            .unwrap_or_default();
+        self.bookmarks_bar.set_visible(!marks.is_empty());
+        // Store is newest first; the bar grows to the right like other browsers.
+        for (url, title) in marks.into_iter().rev() {
+            let label = gtk::Label::builder()
+                .label(if title.is_empty() { &url } else { &title })
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .max_width_chars(20)
+                .build();
+            let icon = gtk::Image::from_icon_name("m-public-symbolic");
+            if url.starts_with("https://") || url.starts_with("http://") {
+                let session = self.app.network_session(None);
+                let (weak, page) = (icon.downgrade(), url.clone());
+                glib::spawn_future_local(async move {
+                    if let (Some(texture), Some(icon)) = (session.favicon(&page).await, weak.upgrade()) {
+                        icon.set_paintable(Some(&texture));
+                    }
+                });
+            }
+            let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            content.append(&icon);
+            content.append(&label);
+            let b = gtk::Button::builder().child(&content).tooltip_text(&url).build();
+            b.add_css_class("bookmark");
+            b.connect_clicked({
+                let w = Rc::downgrade(self);
+                move |_| {
+                    let Some(w) = w.upgrade() else { return };
+                    let Some(tab) = w.current.borrow().clone() else {
+                        return;
+                    };
+                    w.load(&tab, &url);
+                    w.sync_ui();
+                }
+            });
+            self.bookmarks_bar.append(&b);
+        }
+    }
+
     fn show_bookmarks(self: &Rc<Self>) {
         let Some(store) = self.app.store() else { return };
         let w = Rc::downgrade(self);
@@ -2197,6 +2496,7 @@ impl Window {
                         if let Some(s) = w.app.store() {
                             s.unbookmark(url);
                         }
+                        w.app.sync_bookmarks_bars();
                         w.sync_ui();
                     }
                 })),
@@ -2204,6 +2504,57 @@ impl Window {
             },
         );
     }
+}
+
+/// Move `v[from]` to just before or after what is now `v[target]`; returns it.
+fn reorder<T: Clone>(v: &mut Vec<T>, from: usize, target: usize, after: bool) -> T {
+    let item = v.remove(from);
+    let target = if from < target { target - 1 } else { target };
+    v.insert(target + usize::from(after), item.clone());
+    item
+}
+
+/// Round badge over a caption, as a flat button.
+fn ntp_tile(avatar: &gtk::Box, label: &str, tooltip: &str) -> gtk::Button {
+    avatar.set_halign(gtk::Align::Center);
+    let caption = gtk::Label::builder()
+        .label(label)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .max_width_chars(11)
+        .width_chars(11)
+        .build();
+    caption.add_css_class("tile-caption");
+    let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    inner.append(avatar);
+    inner.append(&caption);
+    let tile = gtk::Button::builder().child(&inner).tooltip_text(tooltip).build();
+    tile.add_css_class("tile");
+    tile
+}
+
+/// Popover pointing at a tile. Parented to the page column, not the tile or
+/// flow box, so clicks inside it don't reach their click handlers.
+fn ntp_popover(flow: &gtk::FlowBox, target: &gtk::Widget, child: &impl IsA<gtk::Widget>) -> gtk::Popover {
+    let anchor = flow.parent().unwrap_or_else(|| flow.clone().upcast());
+    let pop = gtk::Popover::builder()
+        .child(child)
+        .position(gtk::PositionType::Bottom)
+        .build();
+    pop.add_css_class("info-popover");
+    pop.set_parent(&anchor);
+    if let Some(r) = target.compute_bounds(&anchor) {
+        pop.set_pointing_to(Some(&gdk::Rectangle::new(
+            r.x() as i32,
+            r.y() as i32,
+            r.width() as i32,
+            r.height() as i32,
+        )));
+    }
+    pop.connect_closed(|p| {
+        let p = p.clone();
+        glib::idle_add_local_once(move || p.unparent());
+    });
+    pop
 }
 
 fn info_group() -> gtk::Box {
@@ -2258,4 +2609,21 @@ fn field_row(label: &str, value: &str, mono: bool) -> gtk::Box {
     b.append(&l);
     b.append(&v);
     b
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reorder_tabs() {
+        let run = |from, target, after| {
+            let mut v = vec!['a', 'b', 'c', 'd'];
+            super::reorder(&mut v, from, target, after);
+            v.into_iter().collect::<String>()
+        };
+        assert_eq!(run(0, 2, false), "bacd");
+        assert_eq!(run(0, 2, true), "bcad");
+        assert_eq!(run(3, 0, false), "dabc");
+        assert_eq!(run(3, 1, true), "abdc");
+        assert_eq!(run(1, 3, true), "acdb");
+    }
 }

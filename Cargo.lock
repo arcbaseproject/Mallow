@@ -818,6 +818,7 @@ name = "mallow"
 version = "0.1.4"
 dependencies = [
  "block2",
+ "cc",
  "chacha20poly1305",
  "futures-channel",
  "gdk4-macos",

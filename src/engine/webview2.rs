@@ -657,6 +657,10 @@ impl View {
     }
     /// WebView2 ends the renderer when the controller closes, on drop.
     pub fn terminate(&self) {}
+    /// Per-view memory isn't exposed on this engine.
+    pub async fn memory(&self) -> Option<u64> {
+        None
+    }
     pub fn session_state(&self) -> Option<SessionState> {
         self.uri().map(SessionState)
     }

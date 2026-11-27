@@ -254,6 +254,14 @@ impl App {
         }
     }
 
+    /// Bookmarks changed: refresh the bar in every window.
+    pub fn sync_bookmarks_bars(&self) {
+        let windows = self.windows.borrow().clone();
+        for w in windows {
+            w.sync_bookmarks_bar();
+        }
+    }
+
     pub fn apply_unloading(&self) {
         let windows = self.windows.borrow().clone();
         for w in windows {

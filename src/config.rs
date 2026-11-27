@@ -120,6 +120,13 @@ impl Default for Permissions {
     }
 }
 
+/// A site tile on the new-tab page.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Shortcut {
+    pub name: String,
+    pub url: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Config {
@@ -140,6 +147,8 @@ pub struct Config {
     #[serde(skip_serializing)]
     pub restore_session: Option<bool>,
     pub new_tab: NewTab,
+    /// New-tab page tiles, in order.
+    pub shortcuts: Vec<Shortcut>,
     pub confirm_close: bool,
     pub default_zoom: f64,
     /// Empty: the XDG Downloads folder.
@@ -185,6 +194,7 @@ impl Default for Config {
             startup: None,
             restore_session: None,
             new_tab: NewTab::Page,
+            shortcuts: Vec::new(),
             confirm_close: true,
             default_zoom: 1.0,
             download_dir: String::new(),
@@ -449,6 +459,19 @@ mod tests {
         p.excluded = vec!["https://a.test".into(), "https://b.test:8443".into()];
         let back: Config = toml::from_str(&toml::to_string_pretty(&c).unwrap()).unwrap();
         assert_eq!(format!("{:?}", back.passwords), format!("{:?}", c.passwords));
+    }
+
+    #[test]
+    fn shortcuts_round_trip() {
+        let c = Config {
+            shortcuts: vec![Shortcut {
+                name: "Mail".into(),
+                url: "https://mail.test/".into(),
+            }],
+            ..Default::default()
+        };
+        let back: Config = toml::from_str(&toml::to_string_pretty(&c).unwrap()).unwrap();
+        assert_eq!(back.shortcuts, c.shortcuts);
     }
 
     #[test]

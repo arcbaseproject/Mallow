@@ -47,6 +47,12 @@ impl Engine {
     pub fn new() -> Self {
         let settings = webkit6::Settings::new();
         settings.set_enable_developer_extras(true);
+        if let Some(ctx) = webkit6::WebContext::default() {
+            ctx.connect_initialize_web_process_extensions(|ctx| match install_web_extension() {
+                Ok(dir) => ctx.set_web_process_extensions_directory(&dir.to_string_lossy()),
+                Err(e) => eprintln!("mallow: tab memory unavailable: {e}"),
+            });
+        }
         Self {
             settings,
             content: webkit6::UserContentManager::new(),
@@ -101,6 +107,22 @@ impl Engine {
     pub fn clear_block_rules(&self) {
         self.content.remove_all_filters();
     }
+}
+
+/// Write the embedded web extension to its own directory in the cache, which
+/// WebKit loads into each web process. Rewritten only when it changed.
+fn install_web_extension() -> std::io::Result<std::path::PathBuf> {
+    const SO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mallow-webext.so"));
+    let dir = crate::config::cache_dir().join("webext");
+    let path = dir.join("mallow-webext.so");
+    if std::fs::read(&path).ok().as_deref() != Some(SO) {
+        std::fs::create_dir_all(&dir)?;
+        // Rename into place so a running web process never maps a half-written file.
+        let tmp = dir.join(".mallow-webext.so.tmp");
+        std::fs::write(&tmp, SO)?;
+        std::fs::rename(&tmp, &path)?;
+    }
+    Ok(dir)
 }
 
 // ----------------------------------------------------------------- session
@@ -261,6 +283,13 @@ impl View {
     }
     pub fn favicon(&self) -> Option<gdk::Texture> {
         self.0.favicon()
+    }
+    /// Memory of the view's web process in bytes (proportional set size),
+    /// from the web extension. Views sharing a process report the same value.
+    pub async fn memory(&self) -> Option<u64> {
+        let msg = webkit6::UserMessage::new("mallow-memory", None);
+        let reply = self.0.send_message_to_page_future(&msg).await.ok()?;
+        reply.parameters()?.get::<u64>().filter(|&b| b > 0)
     }
     pub fn is_loading(&self) -> bool {
         self.0.is_loading()
@@ -715,6 +744,37 @@ impl Download {
         });
         self.0.connect_finished(move |dl| {
             f(&Download(dl.clone()), failure.take().unwrap_or(DownloadEnd::Done))
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a display and a sandbox-capable engine runtime"]
+    fn web_extension_reports_memory() {
+        gtk::init().unwrap();
+        let _engine = Engine::new();
+        glib::MainContext::default().block_on(async {
+            let view = View::standalone();
+            let win = gtk::Window::builder().child(&view.widget()).build();
+            win.present();
+            let (tx, rx) = futures_channel::oneshot::channel();
+            let tx = std::cell::Cell::new(Some(tx));
+            view.connect_load(move |_, ev| {
+                if ev == LoadEvent::Finished
+                    && let Some(tx) = tx.take()
+                {
+                    let _ = tx.send(());
+                }
+            });
+            view.load_html("<p>hi</p>", Some("https://synthetic.test/"));
+            rx.await.unwrap();
+            let bytes = view.memory().await.expect("no reply from the web extension");
+            assert!(bytes > 1 << 20, "implausible web process memory: {bytes}");
+            win.destroy();
         });
     }
 }

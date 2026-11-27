@@ -844,6 +844,10 @@ impl View {
     }
     /// WKWebView ends its process when the view is released.
     pub fn terminate(&self) {}
+    /// Per-view memory isn't exposed on this engine.
+    pub async fn memory(&self) -> Option<u64> {
+        None
+    }
     pub fn session_state(&self) -> Option<SessionState> {
         unsafe { self.0.wk.interactionState() }.map(SessionState)
     }

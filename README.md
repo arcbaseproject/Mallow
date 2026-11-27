@@ -55,10 +55,10 @@ Mallow runs on X11 and Wayland. It works on window managers like dwm, i3, sway a
 
 ## What you get
 
-- **Tabs** with favicons. Middle-click a tab to close it, right-click it to reload, duplicate, copy its URL or close it. Ctrl+Shift+T brings back a closed tab.
-- **A new-tab page** with a greeting, a search box and your first eight bookmarks as tiles. Mallow draws it with GTK, so an empty tab starts no WebKit process at all.
+- **Tabs** with favicons. Hover a tab to see its title and how much memory its page uses. Drag a tab to move it. Middle-click a tab to close it, right-click it to reload, duplicate, copy its URL or close it. Ctrl+Shift+T brings back a closed tab.
+- **A new-tab page** with a greeting, a search box and your site shortcuts. Click + to add one; right-click a shortcut to remove it. Mallow draws it with GTK, so an empty tab starts no WebKit process at all.
 - **Session restore.** Restored tabs load the first time you open them.
-- **An address bar** that takes URLs or searches. Click the star to bookmark a page and rename it on the spot. Click the lock to see the connection, certificate, tracker and cookie status.
+- **An address bar** that takes URLs or searches. Click the star to bookmark a page and rename it on the spot. Bookmarks appear on a bar under the address bar, with each site's icon. Click the lock to see the connection, certificate, tracker and cookie status.
 - **Private windows** with their own in-memory session and their own downloads list. Closing the window discards everything.
 - **Tracker blocking** through WebKit's built-in content blocker.
 - **Permission prompts** for camera, microphone, location, notifications and similar requests. Mallow asks you on each request. For a site that wants cookies while embedded in another site, Mallow remembers your answer for that pair of sites until you close the window, and the lock panel lists it.

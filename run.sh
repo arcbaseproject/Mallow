@@ -3,5 +3,5 @@
 # Usage: ./run.sh [url ...]
 set -e
 cd "$(dirname "$0")"
-cargo build --release --quiet
+cargo build --release
 exec ./target/release/mallow "$@"
