@@ -235,11 +235,15 @@ pub fn page(w: &Rc<Window>) -> gtk::Widget {
     }
     let search_margin = search.clone();
     probe.connect_resize(move |_, width, _| {
-        let narrow = width < NARROW;
+        // The probe sits beside the sidebar, so add its width back: judging by
+        // the probe alone flips between narrow and wide on every resize.
+        let side = if sidebar.is_visible() { sidebar.width() } else { 0 };
+        let full = width + side;
+        let narrow = full < NARROW;
         sidebar.set_visible(!narrow);
         picker.set_visible(narrow);
         // Centre a column of at most COLUMN pixels.
-        let avail = if narrow { width } else { width - 260 };
+        let avail = if narrow { full } else { width };
         let margin = ((avail - COLUMN) / 2).max(if narrow { 16 } else { 32 });
         column.set_margin_start(margin);
         column.set_margin_end(margin);
